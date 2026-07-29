@@ -44,7 +44,7 @@ per session: `<session_id>: <status text>`.
 
 1. Copy `hooks/cc-status.sh` into your project (or reference it from this
    checkout directly) and make sure it's executable.
-2. Merge `.claude/settings.json` into your project's `.claude/settings.json`,
+2. Merge `examples/claude-settings.json` into your project's `.claude/settings.json`,
    adjusting the `command` paths to point at your copy of `cc-status.sh`.
 3. Make sure `socat` and `jq` are installed.
 4. Start `./build/cc-status`, then use Claude Code in that project — the

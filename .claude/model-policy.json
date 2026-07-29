@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "project": "hairness",
+  "phases": {
+    "plan": {
+      "model": "opus",
+      "rationale": "Small (440 LOC) but the hard decisions are architectural: how to shape a hand-written Vala binding over libghostty-vt's explicitly unstable C API, and how a status side-channel and a real terminal surface share one code path."
+    },
+    "code": {
+      "model": "opus",
+      "rationale": "Raised two tiers: nearly all code here is hand-written FFI (vapi/libghostty-vt.vapi) where a wrong cname, ownership or out-param annotation compiles clean and corrupts memory at runtime — mistakes valac cannot catch and 440 LOC of tests barely constrain."
+    },
+    "review": {
+      "model": "opus",
+      "rationale": "No CI, and the review target is binding correctness plus a socket that parses untrusted hook payloads — ownership/lifetime errors in the vapi are invisible to the existing asserts."
+    },
+    "explore": {
+      "model": "haiku",
+      "rationale": "9 tracked files; finding things needs no reasoning, and the C headers in .local/include are the real reference material."
+    }
+  },
+  "escalations": [
+    {
+      "when": "task touches vapi/**",
+      "action": "use opus",
+      "rationale": "Hand-written FFI over an unstable API: ABI drift and ownership bugs are silent and memory-unsafe."
+    },
+    {
+      "when": "task touches src/main.vala socket or OSC parsing paths",
+      "action": "use opus",
+      "rationale": "Trust boundary: bytes arrive from hook scripts and are fed to a C parser."
+    },
+    {
+      "when": "tests fail twice in a row on the same task",
+      "action": "escalate one tier",
+      "rationale": "Repeated failure signals the model has misread the API contract."
+    },
+    {
+      "when": "libghostty-vt is upgraded and osc-check or the build starts failing",
+      "action": "use opus",
+      "rationale": "Upstream renamed opaque handles (GhosttyOscParser to GhosttyOscParserImpl) once already; re-deriving a binding from changed headers is precise work."
+    }
+  ],
+  "notes": "No CI and no type system covering the FFI boundary, so the usual 'strong safety net lets you drop a tier' logic is inverted here: the tests (tests/osc-check.vala, hooks/test-derive.sh) catch ABI drift but not lifetime or ownership errors. Re-calibrate if CI is added or if the project grows a large body of ordinary GTK UI code, which would justify dropping code to sonnet. fable was considered for plan and rejected: the repo is far too small, though a future full terminal-surface build-out on the render API would be the case for it."
+}

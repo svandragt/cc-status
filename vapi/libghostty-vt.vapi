@@ -1,17 +1,20 @@
-/* Hand-written Vala binding for libghostty-vt 0.1.0.
+/* Hand-written Vala binding for libghostty-vt (unstable API, built from
+ * upstream main - see scripts/build-libghostty.sh).
  *
  * libghostty-vt's C API is not GObject-based (opaque handles, plain enums), so
  * vapigen cannot generate this - it is maintained by hand against
- * /usr/include/ghostty/vt/*.h.
+ * .local/include/ghostty/vt/*.h.
  *
- * Scope: the OSC parser only. That is deliberate: 0.1.0 ships OSC, SGR, key
- * encoding and paste safety, but NOT a terminal screen/scrollback model, so
- * there is nothing here to render a terminal grid from yet.
+ * Scope: the OSC parser, plus the minimum terminal surface needed to feed VT
+ * bytes in and read the screen back as text. Nothing more is bound on purpose.
  *
  * The handles are typedef'd in C as pointer-to-incomplete-struct
- * (`typedef struct GhosttyOscParser *GhosttyOscParser`), so each is bound as a
- * compact class named after the *struct*, which makes Vala emit
- * `struct GhosttyOscParser *` - ABI-identical to the public typedef.
+ * (`typedef struct GhosttyOscParserImpl *GhosttyOscParser`), so each is bound
+ * as a compact class named after the *Impl struct*, which makes Vala emit
+ * `struct GhosttyOscParserImpl *` - ABI-identical to the public typedef. Using
+ * the typedef name as the cname would emit `struct GhosttyOscParser *`, a
+ * different (and undeclared) type, which is what broke when upstream renamed
+ * these structs.
  */
 [CCode (cheader_filename = "ghostty/vt.h")]
 namespace Ghostty {
@@ -49,7 +52,7 @@ namespace Ghostty {
 	 * handed out unowned: it is invalidated by the next ghostty_osc_* call on
 	 * the same parser. */
 	[Compact]
-	[CCode (cname = "struct GhosttyOscCommand", free_function = "", has_type_id = false)]
+	[CCode (cname = "struct GhosttyOscCommandImpl", free_function = "", has_type_id = false)]
 	public class OscCommand {
 		[CCode (cname = "ghostty_osc_command_type")]
 		public OscCommandType command_type ();
@@ -71,7 +74,7 @@ namespace Ghostty {
 	}
 
 	[Compact]
-	[CCode (cname = "struct GhosttyOscParser", free_function = "ghostty_osc_free", has_type_id = false)]
+	[CCode (cname = "struct GhosttyOscParserImpl", free_function = "ghostty_osc_free", has_type_id = false)]
 	public class OscParser {
 		/* `allocator` is a const GhosttyAllocator *; NULL selects libghostty's
 		 * default allocator, which is all this binding needs, so the allocator

@@ -6,7 +6,15 @@ gtk_dep = dependency('gtk4')
 gio_unix_dep = dependency('gio-unix-2.0')
 
 # libghostty-vt ships a .pc but no vapi, so the binding is hand-written in vapi/.
-ghostty_dep = dependency('libghostty-vt')
+#
+# Prefer ./.local (scripts/build-libghostty.sh) over any system install: distro
+# packages lag far enough behind to be missing the terminal API entirely.
+ghostty_dep = dependency('libghostty-vt', version: '>=0.1.0-dev')
+if ghostty_dep.version() == '0.1.0'
+  warning('Using system libghostty-vt 0.1.0, which has no terminal API. ' +
+          'Run scripts/build-libghostty.sh and re-run meson with ' +
+          'PKG_CONFIG_PATH=$PWD/.local/share/pkgconfig.')
+endif
 add_project_arguments('--vapidir', meson.current_source_dir() / 'vapi', language: 'vala')
 
 executable('cc-status', 'src/main.vala', dependencies: [gtk_dep, gio_unix_dep, ghostty_dep])
