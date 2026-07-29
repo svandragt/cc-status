@@ -12,8 +12,13 @@
 const string SOCKET_PATH = "/tmp/cc-status.sock";
 const int MAX_LINE_LEN = 200;
 
+const uint8 ESC = 0x1B;
+const uint8 BEL = 0x07;
+const uint8 ST  = 0x5C; // the '\' of the ESC \ string terminator
+
 HashTable<string, string> sessions;
 Gtk.Label label;
+Ghostty.OscParser osc_parser;
 
 // Trust boundary: this text arrives from shell hook scripts, not from a
 // trusted process. Clamp its length and always render it via set_text so it
@@ -41,6 +46,65 @@ void refresh_label () {
     }
 }
 
+// Record one "<session_id>\t<text>" status line, whatever transport it arrived on.
+void set_status (string line) {
+    string[] parts = line.split ("\t", 2);
+    if (parts.length != 2) {
+        return; // malformed, ignore
+    }
+    sessions.replace (sanitize (parts[0]), sanitize (parts[1]));
+    refresh_label ();
+}
+
+// Pull status out of a real OSC sequence using libghostty-vt's parser, rather
+// than pattern-matching escape codes by hand. This is the transport a terminal
+// actually delivers: an OSC 2 title change. The payload carries the same
+// "<session_id>\t<text>" format as the plain-line path.
+//
+// Returns true if the line was an OSC sequence (handled or rejected), so the
+// caller knows not to also treat it as a plain status line.
+bool handle_osc_line (string line) {
+    uint8[] bytes = line.data;
+
+    // Find "ESC ]" - the OSC introducer.
+    int start = -1;
+    for (int i = 0; i + 1 < bytes.length; i++) {
+        if (bytes[i] == ESC && bytes[i + 1] == ']') {
+            start = i + 2;
+            break;
+        }
+    }
+    if (start < 0) {
+        return false;
+    }
+
+    // Feed the payload byte-by-byte, stopping at the terminator. ghostty_osc_end
+    // wants every byte *except* the terminator, plus the terminator itself.
+    osc_parser.reset ();
+    uint8 terminator = BEL;
+    for (int i = start; i < bytes.length; i++) {
+        uint8 b = bytes[i];
+        if (b == BEL) {
+            break;
+        }
+        if (b == ESC && i + 1 < bytes.length && bytes[i + 1] == ST) {
+            terminator = ST;
+            break;
+        }
+        osc_parser.next (b);
+    }
+
+    unowned Ghostty.OscCommand cmd = osc_parser.end (terminator);
+    if (cmd.command_type () != Ghostty.OscCommandType.CHANGE_WINDOW_TITLE) {
+        return true; // an OSC sequence, just not one carrying status
+    }
+    unowned string? title = cmd.window_title ();
+    if (title != null) {
+        set_status (title);
+    }
+    return true;
+}
+
 async void handle_connection (SocketConnection conn) {
     var input = new DataInputStream (conn.input_stream);
     try {
@@ -53,14 +117,10 @@ async void handle_connection (SocketConnection conn) {
             if (line.strip ().length == 0) {
                 continue;
             }
-            string[] parts = line.split ("\t", 2);
-            if (parts.length != 2) {
-                continue; // malformed line, ignore
+            if (handle_osc_line (line)) {
+                continue;
             }
-            string session_id = sanitize (parts[0]);
-            string text = sanitize (parts[1]);
-            sessions.replace (session_id, text);
-            refresh_label ();
+            set_status (line);
         }
     } catch (Error e) {
         warning ("read_line_async failed: %s", e.message);
@@ -109,6 +169,9 @@ void activate (Gtk.Application app) {
 
 int main (string[] args) {
     sessions = new HashTable<string, string> (str_hash, str_equal);
+    if (Ghostty.OscParser.create (null, out osc_parser) != Ghostty.Result.SUCCESS) {
+        error ("failed to create libghostty-vt OSC parser");
+    }
     start_socket_service ();
 
     var app = new Gtk.Application ("dev.hairness.cc-status", ApplicationFlags.DEFAULT_FLAGS);

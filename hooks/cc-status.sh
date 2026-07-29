@@ -23,7 +23,13 @@ line=$(jq -r '
   end
 ' 2>/dev/null)
 
+# CC_STATUS_OSC=1 wraps the same line in a real OSC 2 (set window title)
+# sequence, which the app parses with libghostty-vt instead of reading it as a
+# plain line. Same payload, and it is the transport an actual terminal delivers.
 if [ -n "$line" ]; then
+  if [ -n "$CC_STATUS_OSC" ]; then
+    line=$(printf '\033]2;%s\007' "$line")
+  fi
   printf '%s\n' "$line" | socat -t2 - "UNIX-CONNECT:${SOCKET_PATH}" >/dev/null 2>&1
 fi
 
