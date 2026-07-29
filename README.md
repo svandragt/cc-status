@@ -14,22 +14,28 @@ of two transports:
 
 ## libghostty-vt status
 
-Built against libghostty-vt **0.1.0** (system install: `pkg-config
-libghostty-vt`, headers in `/usr/include/ghostty/`).
+Built against libghostty-vt from **upstream main**, installed into `./.local` by
+`scripts/build-libghostty.sh`. The distro package (0.1.0) has the OSC, SGR, key
+and paste parsers but **no terminal, screen or render API at all**, so it cannot
+back a terminal surface; main has `ghostty_terminal_*`.
 
-That release's C API exposes the OSC parser, SGR parser, key encoding and paste
-safety — but **no terminal screen, grid or scrollback model**. So there is
-nothing to render a terminal from yet; `vapi/libghostty-vt.vapi` binds the OSC
-parser, which is the part that does real work for this project today. It is
-hand-written because the API is not GObject-based (opaque handles, plain enums),
-so `vapigen` cannot generate it.
+`vapi/libghostty-vt.vapi` is hand-written because the API is not GObject-based
+(opaque handles, plain enums), so `vapigen` cannot generate it. It binds the OSC
+parser plus the minimum terminal surface: create/reset/resize, `vt_write` to feed
+bytes, and `screen_text ()`, which dumps the active screen as plain text through
+the formatter. The API is explicitly unstable — if the checks below start failing
+after a rebuild of libghostty, the binding is what needs updating.
 
 ## Build
 
 ```sh
-meson setup build
+scripts/build-libghostty.sh    # once, builds libghostty-vt into ./.local
+PKG_CONFIG_PATH=$PWD/.local/share/pkgconfig meson setup build
 ninja -C build
 ```
+
+`--vapidir` is opaque to meson, so a change to `vapi/` does not trigger a
+rebuild on its own: `touch` the `.vala` sources or use a fresh build dir.
 
 ## Run
 
@@ -55,7 +61,7 @@ sequence instead of a plain line.
 
 ## Acceptance tests
 
-Both, via meson: `meson test -C build` (runs the binding check).
+All of the binding checks, via meson: `meson test -C build`.
 
 Regression check for the jq derivation logic (no GTK app needed):
 
@@ -68,6 +74,14 @@ OSC 0/2 titles (BEL- and ST-terminated), OSC 7 pwd, and invalid input:
 
 ```sh
 ./build/osc-check
+```
+
+Check that the terminal binding really emulates VT sequences — cursor
+positioning (CUP), erase-in-line (EL) and SGR are fed in and the characters are
+asserted to land in the exact cells the sequences ask for:
+
+```sh
+./build/terminal-check
 ```
 
 End-to-end check of the hook script over a real socket (no GTK app needed —
@@ -90,5 +104,3 @@ echo '{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash"}' | h
 - `vapi/libghostty-vt.vapi` is named to match the `.pc` file so meson's
   automatic `--pkg libghostty-vt` picks it up. It passes a NULL allocator to
   `ghostty_osc_new`, which avoids binding the allocator vtable at all.
-- libghostty-vt's API is explicitly unstable; if `osc-check` starts failing
-  after an upgrade, the binding is what needs updating.

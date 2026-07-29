@@ -26,3 +26,8 @@ executable('cc-status', 'src/main.vala', dependencies: [gtk_dep, gio_unix_dep, g
 glib_dep = dependency('glib-2.0')
 osc_check = executable('osc-check', 'tests/osc-check.vala', dependencies: [ghostty_dep, glib_dep])
 test('osc-binding', osc_check)
+
+# --vapidir is opaque to meson: it does not know the vapi is an input, so
+# editing vapi/ needs a `touch` of the .vala sources (or a fresh build dir).
+terminal_check = executable('terminal-check', 'tests/terminal-check.vala', dependencies: [ghostty_dep, glib_dep])
+test('terminal-binding', terminal_check)
