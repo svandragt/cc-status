@@ -17,7 +17,12 @@ if ghostty_dep.version() == '0.1.0'
 endif
 add_project_arguments('--vapidir', meson.current_source_dir() / 'vapi', language: 'vala')
 
-executable('cc-status', 'src/main.vala', dependencies: [gtk_dep, gio_unix_dep, ghostty_dep])
+# posix is a vapi-only binding (no library): it is how the app reaches
+# write/execv/pid_t without a new dependency, and vapi/pty.vapi adds forkpty on
+# top. forkpty lives in glibc proper since 2.34, so no -lutil is needed.
+executable('cc-status', 'src/main.vala',
+           dependencies: [gtk_dep, gio_unix_dep, ghostty_dep],
+           vala_args: ['--pkg', 'posix', '--pkg', 'pty'])
 
 # vapi/libghostty-vt.vapi is named to match the .pc, so meson's automatic
 # `--pkg libghostty-vt` for this dependency picks the hand-written binding up.

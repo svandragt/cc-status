@@ -1,7 +1,34 @@
 # cc-status
 
-Minimal Vala + GTK4 window showing live Claude Code session status, fed by
-Claude Code hooks over a Unix domain socket at `/tmp/cc-status.sock`.
+Minimal Vala + GTK4 window with two things in it:
+
+1. **a working terminal** — a real shell on a PTY, emulated by
+   **libghostty-vt** (no VTE) and rendered into a monospace label;
+2. **a live Claude Code status line**, fed by Claude Code hooks over a Unix
+   domain socket at `/tmp/cc-status.sock`.
+
+## The terminal
+
+`forkpty` starts `$SHELL` with `TERM=xterm-256color` on an 80x24 PTY. The
+master fd is read through a `UnixInputStream.read_async` loop on the GLib main
+loop (no polling, no blocking read); every chunk goes into
+`Ghostty.Terminal.vt_write`, and `Terminal.screen_text ()` is dumped into the
+label after each write. A `Gtk.EventControllerKey` on the window turns key
+presses back into bytes on the PTY, so typing, Enter, Backspace and Ctrl-letter
+all reach the shell.
+
+It is a prototype, and deliberately shallow: no colour or attributes (the
+formatter's plain dump discards SGR), no scrollback, no selection, no mouse, no
+resize — the size is fixed at 80x24. Colour needs the styled formatter output
+or a real drawing area instead of a label; resize needs cell metrics plus
+`TIOCSWINSZ` alongside `Terminal.resize`.
+
+`forkpty` and `struct winsize` are not in `posix.vapi`, so they are bound in
+`vapi/pty.vapi` — in a vapi rather than inline, because valac emits a C
+definition for any struct declared in Vala source, which would collide with the
+real one from `termios.h`.
+
+## The status feed
 
 Status lines arrive in one format, `<session_id><TAB><status text>`, over either
 of two transports:
@@ -9,8 +36,8 @@ of two transports:
 - **plain line** — what the hook writes by default;
 - **OSC 2** (set window title) — a real terminal escape sequence, parsed with
   **libghostty-vt** via the hand-written Vala binding in `vapi/`. This is the
-  transport an actual terminal delivers, so it is the path the eventual
-  libghostty-backed terminal surface will reuse.
+  transport an actual terminal delivers, so it is the path a shell running in
+  the terminal above can use directly.
 
 ## libghostty-vt status
 
@@ -43,8 +70,9 @@ rebuild on its own: `touch` the `.vala` sources or use a fresh build dir.
 ./build/cc-status
 ```
 
-Leave it running. Each Claude Code hook event updates the label with a line
-per session: `<session_id>: <status text>`.
+The shell prompt appears immediately; click the window and type. Each Claude
+Code hook event updates the status line under the separator with a line per
+session: `<session_id>: <status text>`.
 
 ## Install the hooks
 
@@ -100,7 +128,13 @@ echo '{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash"}' | h
   socket paths are the natural follow-on for running multiple
   projects/instances at once.
 - Incoming text is truncated to 200 chars and rendered with `set_text`
-  (never markup) since it comes from a hook script, not a trusted source.
+  (never markup) since it comes from a hook script, not a trusted source. The
+  terminal dump is rendered with `set_text` for the same reason.
+- Anything the shell writes is untrusted input to the emulator, so hold the
+  screen dump in a local before using it: `term.screen_text ().data` takes an
+  unowned view into a temporary that valac frees before the loop runs. That
+  use-after-free has bitten this repo once already — see the comment in
+  `tests/terminal-check.vala`.
 - `vapi/libghostty-vt.vapi` is named to match the `.pc` file so meson's
   automatic `--pkg libghostty-vt` picks it up. It passes a NULL allocator to
   `ghostty_osc_new`, which avoids binding the allocator vtable at all.
