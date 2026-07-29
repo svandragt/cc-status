@@ -49,7 +49,12 @@ int main () {
     // SGR changed the style, not the text, and the plain dump carries no
     // escape bytes at all.
     assert (r[6] == "styled");
-    foreach (uint8 b in term.screen_text ().data) {
+    // The dump must be held in a local: `screen_text ().data` would take an
+    // unowned view into an owned temporary that valac frees *before* the loop
+    // runs, so the loop would read freed heap - which still holds the ESC bytes
+    // written above, making this assert fail at random.
+    string dump = term.screen_text ();
+    foreach (uint8 b in dump.data) {
         assert (b != ESC);
     }
 
