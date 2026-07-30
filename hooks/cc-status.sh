@@ -7,21 +7,17 @@
 
 SOCKET_PATH="/tmp/cc-status.sock"
 
-line=$(jq -r '
-  if .hook_event_name == "PreToolUse" then
-    "\(.session_id)\t" + "running \(.tool_name)"
-  elif .hook_event_name == "PostToolUse" then
-    "\(.session_id)\t" + "idle (last: \(.tool_name))"
-  elif .hook_event_name == "Notification" and .notification_type == "permission_prompt" then
-    "\(.session_id)\t" + "waiting for permission"
-  elif .hook_event_name == "Notification" then
-    "\(.session_id)\t" + "notice"
-  elif .hook_event_name == "Stop" then
-    "\(.session_id)\t" + "idle"
-  else
-    empty
-  end
-' 2>/dev/null)
+# The derivation itself lives in derive.jq so hooks/test-derive.sh can check
+# the exact program that runs here, rather than a copy of it.
+line=$(jq -r -f "$(dirname "$0")/derive.jq" 2>/dev/null)
+
+if [ -n "$line" ]; then
+  # Where this session lives (tty + project) as a third field, and the same
+  # session label put on the terminal tab itself - see hooks/where.sh.
+  . "$(dirname "$0")/where.sh"
+  cc_status_set_tab_title "$(printf '%s' "$line" | cut -f1,2 --output-delimiter=': ')"
+  line=$(printf '%s\t%s' "$line" "$(cc_status_where)")
+fi
 
 # CC_STATUS_OSC=1 wraps the same line in a real OSC 2 (set window title)
 # sequence, which the app parses with libghostty-vt instead of reading it as a

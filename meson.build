@@ -7,22 +7,20 @@ gio_unix_dep = dependency('gio-unix-2.0')
 
 # libghostty-vt ships a .pc but no vapi, so the binding is hand-written in vapi/.
 #
-# Prefer ./.local (scripts/build-libghostty.sh) over any system install: distro
-# packages lag far enough behind to be missing the terminal API entirely.
+# Prefer ./.local (scripts/build-libghostty.sh) over any system install: the
+# distro 0.1.0 package still names the opaque structs the old way
+# (`struct GhosttyOscParser`, not `...Impl`), so the binding does not compile
+# against it - see the comment at the top of vapi/libghostty-vt.vapi.
 ghostty_dep = dependency('libghostty-vt', version: '>=0.1.0-dev')
 if ghostty_dep.version() == '0.1.0'
-  warning('Using system libghostty-vt 0.1.0, which has no terminal API. ' +
-          'Run scripts/build-libghostty.sh and re-run meson with ' +
-          'PKG_CONFIG_PATH=$PWD/.local/share/pkgconfig.')
+  warning('Using system libghostty-vt 0.1.0, whose headers predate the struct ' +
+          'rename this binding targets. Run scripts/build-libghostty.sh and ' +
+          're-run meson with PKG_CONFIG_PATH=$PWD/.local/share/pkgconfig.')
 endif
 add_project_arguments('--vapidir', meson.current_source_dir() / 'vapi', language: 'vala')
 
-# posix is a vapi-only binding (no library): it is how the app reaches
-# write/execv/pid_t without a new dependency, and vapi/pty.vapi adds forkpty on
-# top. forkpty lives in glibc proper since 2.34, so no -lutil is needed.
-executable('cc-status', 'src/main.vala',
-           dependencies: [gtk_dep, gio_unix_dep, ghostty_dep],
-           vala_args: ['--pkg', 'posix', '--pkg', 'pty'])
+executable('cc-status', 'src/main.vala', 'src/status.vala',
+           dependencies: [gtk_dep, gio_unix_dep, ghostty_dep])
 
 # vapi/libghostty-vt.vapi is named to match the .pc, so meson's automatic
 # `--pkg libghostty-vt` for this dependency picks the hand-written binding up.
@@ -34,5 +32,9 @@ test('osc-binding', osc_check)
 
 # --vapidir is opaque to meson: it does not know the vapi is an input, so
 # editing vapi/ needs a `touch` of the .vala sources (or a fresh build dir).
-terminal_check = executable('terminal-check', 'tests/terminal-check.vala', dependencies: [ghostty_dep, glib_dep])
-test('terminal-binding', terminal_check)
+
+# src/status.vala is pure GLib, so its checks need neither GTK nor libghostty.
+# gobject-2.0 is needed for the GType valac emits for the public Light enum.
+status_check = executable('status-check', 'tests/status-check.vala', 'src/status.vala',
+                          dependencies: [glib_dep, dependency('gobject-2.0')])
+test('status-logic', status_check)

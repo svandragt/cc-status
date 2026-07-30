@@ -5,8 +5,9 @@
  * vapigen cannot generate this - it is maintained by hand against
  * .local/include/ghostty/vt/*.h.
  *
- * Scope: the OSC parser, plus the minimum terminal surface needed to feed VT
- * bytes in and read the screen back as text. Nothing more is bound on purpose.
+ * Scope: the OSC parser, and nothing else on purpose. The terminal, formatter
+ * and cursor surface this used to bind went with the embedded terminal - see git
+ * history if a VT surface is ever wanted back.
  *
  * The handles are typedef'd in C as pointer-to-incomplete-struct
  * (`typedef struct GhosttyOscParserImpl *GhosttyOscParser`), so each is bound
@@ -93,92 +94,5 @@ namespace Ghostty {
 		 * terminator, passing the terminator here (0x07 BEL or 0x5C ST). */
 		[CCode (cname = "ghostty_osc_end")]
 		public unowned OscCommand end (uint8 terminator);
-	}
-
-	[CCode (cname = "GhosttyFormatterFormat", cprefix = "GHOSTTY_FORMATTER_FORMAT_", has_type_id = false)]
-	public enum FormatterFormat {
-		PLAIN
-	}
-
-	/* Only the leading fields of GhosttyFormatterTerminalOptions are declared
-	 * here. The struct is versioned by its `size` field, and everything after
-	 * `trim` (the styled-output extras and an optional selection pointer) must
-	 * be zero for the plain-text dump this binding wants. The real layout comes
-	 * from the C header - valac never emits a definition for a vapi struct - so
-	 * a partial declaration is ABI-safe as long as the omitted tail is zeroed,
-	 * which the default struct constructor does. */
-	[SimpleType]
-	[CCode (cname = "GhosttyFormatterTerminalOptions", has_type_id = false)]
-	public struct FormatterTerminalOptions {
-		size_t size;
-		FormatterFormat emit;
-		bool unwrap;
-		bool trim;
-	}
-
-	[Compact]
-	[CCode (cname = "struct GhosttyFormatterImpl", free_function = "ghostty_formatter_free", has_type_id = false)]
-	public class Formatter {
-		/* The formatter only borrows the terminal (which must outlive it), so
-		 * `terminal` is an unowned parameter - the default for Vala params. */
-		[CCode (cname = "ghostty_formatter_terminal_new")]
-		public static Result create (void* allocator, out Formatter formatter, Terminal terminal, FormatterTerminalOptions options);
-
-		/* `buf` carries its length in `buf_len`, not in a companion argument,
-		 * hence array_length = false. Passing null/0 queries the required size,
-		 * which reports OUT_OF_SPACE - except on a blank screen, where zero
-		 * bytes fit in a zero-length buffer and the result is SUCCESS. */
-		[CCode (cname = "ghostty_formatter_format_buf")]
-		public Result format_buf ([CCode (array_length = false)] uint8[]? buf, size_t buf_len, out size_t written);
-	}
-
-	[Compact]
-	[CCode (cname = "struct GhosttyTerminalImpl", free_function = "ghostty_terminal_free", has_type_id = false)]
-	public class Terminal {
-		/* NULL allocator selects libghostty's default, same as ghostty_osc_new. */
-		[CCode (cname = "ghostty_terminal_new")]
-		public static Result create (void* allocator, out Terminal terminal, uint16 cols, uint16 rows);
-
-		[CCode (cname = "ghostty_terminal_reset")]
-		public void reset ();
-
-		[CCode (cname = "ghostty_terminal_resize")]
-		public Result resize (uint16 cols, uint16 rows, uint32 cell_width_px, uint32 cell_height_px);
-
-		/* Cannot fail: malformed input is logged internally and dropped rather
-		 * than reported, so there is no result to check. */
-		[CCode (cname = "ghostty_terminal_vt_write")]
-		public void vt_write ([CCode (array_length_type = "size_t")] uint8[] data);
-
-		/* The whole active screen as plain text, rows separated by '\n'.
-		 * Wrapped here rather than exposed as raw formatter calls because the
-		 * two-pass size query and the options struct are pure boilerplate. */
-		public string? screen_text () {
-			FormatterTerminalOptions opts = {
-				sizeof (FormatterTerminalOptions),
-				FormatterFormat.PLAIN
-			};
-
-			Formatter formatter;
-			if (Formatter.create (null, out formatter, this, opts) != Result.SUCCESS) {
-				return null;
-			}
-
-			size_t needed;
-			var queried = formatter.format_buf (null, 0, out needed);
-			if (queried != Result.OUT_OF_SPACE && queried != Result.SUCCESS) {
-				return null;
-			}
-
-			/* format_buf writes raw bytes, no NUL, so leave room for one. The
-			 * buffer is Vala-owned and freed on return - hence the copy. */
-			var buf = new uint8[needed + 1];
-			size_t written;
-			if (formatter.format_buf (buf, needed, out written) != Result.SUCCESS) {
-				return null;
-			}
-			buf[written] = 0;
-			return ((string) buf).dup ();
-		}
 	}
 }

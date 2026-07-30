@@ -1,74 +1,119 @@
-// Minimal libghostty-backed terminal with a Claude Code status feed.
+// AI status screen: a table with one traffic-light row per agent session, fed by
+// hooks/cc-status.sh (Claude Code) and hooks/codex-notify.sh (Codex) over a Unix
+// domain socket - lines of "<agent>/<session_id>\t<display text>" plus an
+// optional third field saying which terminal tab and project the session is in.
 //
-// The window holds two things: a real shell running on a PTY, emulated by
-// libghostty-vt's terminal and dumped to a monospace label, and the status
-// label fed by hooks/cc-status.sh over a Unix domain socket (lines of
-// "<session_id>\t<display text>").
-//
-// ponytail: one fixed socket path for all sessions, so a second concurrent
-// project/session on the same machine overwrites the same feed. Per-session
-// socket paths (e.g. under the project's .claude dir) are the natural
-// follow-on if multi-session/multi-project isolation is ever needed.
-
-// forkpty and struct winsize come from vapi/pty.vapi - see the comment there
-// for why they cannot be declared in this file.
+// ponytail: one fixed socket path, shared by every agent and session on the
+// machine. That is what makes a single window able to show all of them, and it
+// also means two copies of this app cannot both listen - the second launch just
+// raises the first window.
 
 const string SOCKET_PATH = "/tmp/cc-status.sock";
-const int MAX_LINE_LEN = 200;
-
-// ponytail: fixed 80x24, no resize-on-window-resize. Dynamic sizing means
-// recomputing cols/rows from the label's cell metrics and calling both
-// Terminal.resize and TIOCSWINSZ on the pty - only worth it once the surface
-// is a real drawing area rather than a label.
-const uint16 TERM_COLS = 80;
-const uint16 TERM_ROWS = 24;
 
 const uint8 ESC = 0x1B;
 const uint8 BEL = 0x07;
 const uint8 ST  = 0x5C; // the '\' of the ESC \ string terminator
 
 HashTable<string, string> sessions;
-Gtk.Label label;
+HashTable<string, string> wheres;   // session id -> "pts/7 · project", if it said
+Gtk.Grid table;
+Gtk.Window main_window;
 Ghostty.OscParser osc_parser;
 
-Ghostty.Terminal term;
-Gtk.Label term_label;
-int pty_fd = -1;
+const string WINDOW_TITLE = "AI Status";
 
-// Trust boundary: this text arrives from shell hook scripts, not from a
-// trusted process. Clamp its length and always render it via set_text so it
-// can never be interpreted as Pango markup.
-string sanitize (string s) {
-    string trimmed = s.strip ();
-    if (trimmed.length > MAX_LINE_LEN) {
-        return trimmed.substring (0, MAX_LINE_LEN) + "…";
+// Rebuild the table from scratch on every update: there are a handful of rows,
+// so tracking which one changed would be more code than redrawing all of them.
+//
+// ponytail: a Gtk.Grid of labels rather than a Gtk.ColumnView. A ColumnView would
+// bring sortable, selectable rows and a list model, none of which is wanted here,
+// at the cost of an item GObject plus a factory per column.
+void refresh_table () {
+    Gtk.Widget? child = table.get_first_child ();
+    while (child != null) {
+        table.remove (child);
+        child = table.get_first_child ();
     }
-    return trimmed;
-}
 
-void refresh_label () {
-    var sb = new StringBuilder ();
-    var iter = HashTableIter<string, string> (sessions);
-    unowned string session_id;
-    unowned string text;
-    while (iter.next (out session_id, out text)) {
-        sb.append_printf ("%s: %s\n", session_id, text);
-    }
-    if (sb.len == 0) {
-        label.set_text ("(no sessions yet)");
+    var ids = sorted_ids (sessions);
+
+    if (ids.length () == 0) {
+        // Statuses are live, not persisted: a fresh window is empty until the
+        // next hook event, which is worth saying so it does not read as broken.
+        var empty = new Gtk.Label ("Waiting for a hook event — a row appears when an agent next does something.");
+        empty.set_wrap (true);
+        empty.set_xalign (0);
+        table.attach (empty, 0, 0, 4, 1);
     } else {
-        label.set_text (sb.str);
+        table.attach (header ("Session"), 1, 0, 1, 1);
+        table.attach (header ("Status"), 2, 0, 1, 1);
+        table.attach (header ("Where"), 3, 0, 1, 1);
+
+        int row = 1;
+        foreach (unowned string id in ids) {
+            unowned string text = sessions.lookup (id);
+            Light light = light_for (text);
+
+            var dot = new Gtk.Label (light_glyph (light));
+            // The colour alone says nothing to a screen reader, and little to
+            // anyone who has not read the README.
+            dot.set_tooltip_text (light_text (light));
+
+            var session = new Gtk.Label (short_id (id));
+            session.set_xalign (0);
+            session.set_tooltip_text (id); // the full id, which the row truncates
+
+            // Status text comes from a hook script: set_text (never markup), and
+            // ellipsized rather than allowed to stretch the window.
+            var status = new Gtk.Label (text);
+            status.set_xalign (0);
+            status.set_ellipsize (Pango.EllipsizeMode.END);
+
+            // Which terminal tab this session is in: `tty` in a tab matches the
+            // tty here. Blank for a session whose hook predates the field.
+            var place = new Gtk.Label (wheres.lookup (id) ?? "");
+            place.set_xalign (0);
+            place.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
+            place.set_hexpand (true);
+
+            table.attach (dot, 0, row, 1, 1);
+            table.attach (session, 1, row, 1, 1);
+            table.attach (status, 2, row, 1, 1);
+            table.attach (place, 3, row, 1, 1);
+            row++;
+        }
     }
+
+    // The title carries the worst light of all sessions, so the taskbar/window
+    // list answers "does anything need me?" without focusing the window.
+    Light worst = light_of (sessions);
+    main_window.set_title (worst == Light.NONE
+        ? WINDOW_TITLE
+        : light_glyph (worst) + " " + WINDOW_TITLE);
 }
 
-// Record one "<session_id>\t<text>" status line, whatever transport it arrived on.
+Gtk.Label header (string text) {
+    var label = new Gtk.Label (text);
+    label.set_xalign (0);
+    var attrs = new Pango.AttrList ();
+    attrs.insert (Pango.attr_weight_new (Pango.Weight.BOLD));
+    label.set_attributes (attrs);
+    return label;
+}
+
+// Record one status line, whatever transport it arrived on.
 void set_status (string line) {
-    string[] parts = line.split ("\t", 2);
-    if (parts.length != 2) {
+    string id;
+    string text;
+    string where;
+    if (!parse_status (line, out id, out text, out where)) {
         return; // malformed, ignore
     }
-    sessions.replace (sanitize (parts[0]), sanitize (parts[1]));
-    refresh_label ();
+    sessions.replace (id, text);
+    if (where.length > 0) {
+        wheres.replace (id, where);
+    }
+    refresh_table ();
 }
 
 // Pull status out of a real OSC sequence using libghostty-vt's parser, rather
@@ -147,13 +192,16 @@ bool on_incoming (SocketConnection conn, Object? source_object) {
     return false; // keep the service listening for further connections
 }
 
+SocketService? service = null;
+FileMonitor? socket_monitor = null;
+
 void start_socket_service () {
     // Remove a stale socket file from a previous run, otherwise binding fails.
     if (FileUtils.test (SOCKET_PATH, FileTest.EXISTS)) {
         FileUtils.unlink (SOCKET_PATH);
     }
 
-    var service = new SocketService ();
+    service = new SocketService ();
     try {
         var address = new UnixSocketAddress (SOCKET_PATH);
         service.add_address (address, SocketType.STREAM, SocketProtocol.DEFAULT, null, null);
@@ -162,168 +210,212 @@ void start_socket_service () {
     }
     service.incoming.connect (on_incoming);
     service.start ();
+
+    watch_socket ();
 }
 
-// Dump the emulated screen into the label. The dump must go into a local
-// first: `term.screen_text ()` returns an owned string, and anything taking a
-// view into it (.data, a pointer) while it is still a temporary reads memory
-// valac has already freed. See tests/terminal-check.vala.
-void refresh_terminal () {
-    string screen = term.screen_text () ?? "";
-    term_label.set_text (screen);
-}
-
-// Feed the shell's output through the emulator, one chunk at a time, off the
-// main loop's read_async - no timer polling, no blocking read.
-async void pump_pty (InputStream input) {
-    var buf = new uint8[4096];
-    while (true) {
-        ssize_t n;
-        try {
-            n = yield input.read_async (buf);
-        } catch (Error e) {
-            warning ("pty read failed: %s", e.message);
-            break;
-        }
-        if (n <= 0) {
-            break; // shell exited and closed the slave side
-        }
-        term.vt_write (buf[0:(int) n]);
-        refresh_terminal ();
-    }
-}
-
-void pty_write (string s) {
-    if (pty_fd < 0) {
+// A bound socket whose path has been unlinked still exists for this process but
+// is unreachable for every hook: connect () resolves the name, not the inode. Any
+// other process that binds and later exits on the same path takes ours with it
+// (`socat UNIX-LISTEN` unlinks on exit), and nothing in this app would notice.
+// So watch the path and rebind when it goes away.
+void watch_socket () {
+    try {
+        socket_monitor = File.new_for_path (SOCKET_PATH).monitor_file (FileMonitorFlags.WATCH_MOVES, null);
+    } catch (Error e) {
+        warning ("cannot watch %s, a lost socket will go unnoticed: %s", SOCKET_PATH, e.message);
         return;
     }
-    unowned uint8[] bytes = s.data;
-    if (Posix.write (pty_fd, bytes, bytes.length) < 0) {
-        warning ("pty write failed");
+    socket_monitor.changed.connect ((file, other, event) => {
+        // Only the disappearance matters, and only if it really is gone: the
+        // unlink in start_socket_service fires this too, just before binding.
+        if (FileUtils.test (SOCKET_PATH, FileTest.EXISTS)) {
+            return;
+        }
+        warning ("%s went away, rebinding", SOCKET_PATH);
+        socket_monitor = null;   // start_socket_service installs a fresh one
+        service = null;          // drops the old, now unreachable, listener
+        start_socket_service ();
+    });
+}
+
+// Where this checkout's hook script and installer live, resolved from the
+// running binary (build/cc-status -> ../hooks, ../scripts) rather than the cwd,
+// which is wherever the user happened to launch from.
+string? repo_file (string relative) {
+    string exe;
+    try {
+        exe = FileUtils.read_link ("/proc/self/exe");
+    } catch (FileError e) {
+        return null;
+    }
+    string path = Path.build_filename (Path.get_dirname (Path.get_dirname (exe)), relative);
+    return FileUtils.test (path, FileTest.EXISTS) ? path : null;
+}
+
+// One agent this app can get status out of, and how to wire it up.
+struct Agent {
+    string name;        // as shown in the dialog
+    string program;     // on PATH? then it is worth offering
+    string hook;        // repo-relative script the agent will run
+    string installer;   // repo-relative script that edits the agent's config
+    string config;      // the file that gets edited, relative to $HOME
+}
+
+const Agent[] AGENTS = {
+    { "Claude Code", "claude", "hooks/cc-status.sh", "scripts/install-hooks.sh", ".claude/settings.json" },
+    { "Codex", "codex", "hooks/codex-notify.sh", "scripts/install-codex-notify.sh", ".codex/config.toml" }
+};
+
+// Already wired up? The hook path in the agent's own config is the marker its
+// installer uses, so this asks exactly the question the installer would.
+bool hook_installed (Agent agent, string hook) {
+    string config = Path.build_filename (Environment.get_home_dir (), agent.config);
+    try {
+        string existing;
+        return FileUtils.get_contents (config, out existing) && existing.contains (hook);
+    } catch (FileError e) {
+        return false; // no config yet, or unreadable: treat as not installed
     }
 }
 
-void spawn_shell () {
-    // Positional, in vapi field order: rows, cols, then the pixel dimensions
-    // (unused - nothing here draws in pixels).
-    Pty.WinSize ws = { TERM_ROWS, TERM_COLS, 0, 0 };
-
-    int master;
-    Posix.pid_t pid = Pty.forkpty (out master, null, null, &ws);
-    if (pid < 0) {
-        error ("forkpty failed");
-    }
-    if (pid == 0) {
-        Environment.set_variable ("TERM", "xterm-256color", true);
-        string shell = Environment.get_variable ("SHELL") ?? "/bin/sh";
-        Posix.execv (shell, { shell, null }); // the vapi wants argv NUL-terminated
-        Posix.exit (127); // only reached if exec failed
+// One-time offer to wire up whichever agents are installed but not yet
+// reporting. These are edits to the user's own config, so they are always asked
+// for - never done silently. "Not now" leaves a marker so the question is asked
+// once, not every launch.
+void offer_hooks (Gtk.Window parent) {
+    string declined = Path.build_filename (Environment.get_user_config_dir (), "cc-status", "hooks-declined");
+    if (FileUtils.test (declined, FileTest.EXISTS)) {
+        return;
     }
 
-    pty_fd = master;
-    // The stream owns the fd; pty_write goes through Posix.write on the same
-    // fd, which is fine as long as the stream outlives the window - it does,
-    // the pump holds it for the app's lifetime.
-    pump_pty.begin (new UnixInputStream (master, true));
-}
+    var names = new StringBuilder ();
+    var detail = new StringBuilder ();
+    var pending = new Array<string> ();   // installer, hook, installer, hook, ...
 
-bool on_key_pressed (uint keyval, uint keycode, Gdk.ModifierType state) {
-    string? out_bytes = null;
-    switch (keyval) {
-        case Gdk.Key.Return:
-        case Gdk.Key.KP_Enter:
-            out_bytes = "\r";
-            break;
-        case Gdk.Key.BackSpace:
-            out_bytes = "\x7f";
-            break;
-        case Gdk.Key.Tab:
-            out_bytes = "\t";
-            break;
-        case Gdk.Key.Escape:
-            out_bytes = "\x1b";
-            break;
-        default:
-            unichar c = Gdk.keyval_to_unicode (keyval);
-            if (c == 0) {
-                return false;
+    foreach (Agent agent in AGENTS) {
+        if (Environment.find_program_in_path (agent.program) == null) {
+            continue; // not installed here
+        }
+        string? hook = repo_file (agent.hook);
+        string? installer = repo_file (agent.installer);
+        if (hook == null || installer == null || hook_installed (agent, hook)) {
+            continue;
+        }
+        if (names.len > 0) {
+            names.append (" and ");
+        }
+        names.append (agent.name);
+        detail.append_printf ("%s: run %s from ~/%s\n", agent.name, hook, agent.config);
+        pending.append_val (installer);
+        pending.append_val (hook);
+    }
+
+    if (pending.length == 0) {
+        return; // nothing detected, or everything already wired up
+    }
+
+    var dialog = new Gtk.AlertDialog ("Report status from " + names.str + "?");
+    dialog.set_detail (names.str + " is installed, but nothing is feeding this window yet.\n\n" +
+                       detail.str + "\nA .bak backup of each file is kept.");
+    dialog.set_buttons ({ "Not now", "Set up" });
+    dialog.set_cancel_button (0);
+    dialog.set_default_button (1);
+    dialog.choose.begin (parent, null, (obj, res) => {
+        int choice;
+        try {
+            choice = dialog.choose.end (res);
+        } catch (Error e) {
+            return; // dismissed without choosing: ask again next launch
+        }
+        if (choice != 1) {
+            DirUtils.create_with_parents (Path.get_dirname (declined), 0755);
+            try {
+                FileUtils.set_contents (declined, "");
+            } catch (FileError e) {
+                warning ("could not write %s: %s", declined, e.message);
             }
-            if ((state & Gdk.ModifierType.CONTROL_MASK) != 0) {
-                // Ctrl-A..Ctrl-Z are the letter's position in the alphabet.
-                unichar lower = c.tolower ();
-                if (lower < 'a' || lower > 'z') {
-                    return false;
+            return;
+        }
+
+        var failures = new StringBuilder ();
+        for (uint i = 0; i + 1 < pending.length; i += 2) {
+            string installer = pending.index (i);
+            string hook = pending.index (i + 1);
+            try {
+                string stdout_text;
+                string stderr_text;
+                int status;
+                Process.spawn_sync (null, { installer, hook, null }, null,
+                                    0, null,
+                                    out stdout_text, out stderr_text, out status);
+                if (status != 0) {
+                    // The Codex installer refuses rather than clobber an existing
+                    // notify, and says why on stderr - worth showing, not hiding.
+                    failures.append (stderr_text.strip () + "\n");
+                    continue;
                 }
-                out_bytes = ((char) (lower - 'a' + 1)).to_string ();
-            } else {
-                out_bytes = c.to_string ();
+                message ("%s", stdout_text.strip ());
+            } catch (SpawnError e) {
+                failures.append_printf ("could not run %s: %s\n", installer, e.message);
             }
-            break;
-    }
-    pty_write (out_bytes);
-    return true;
+        }
+
+        // Both agents read their config when a session starts, so anything
+        // already running will not pick this up.
+        var done = new Gtk.AlertDialog (failures.len > 0 ? "Partly set up" : "Set up");
+        done.set_detail (failures.len > 0
+            ? failures.str + "\nStart a new session for whatever did succeed."
+            : "Start a new agent session (restart any running one) and its status appears here.");
+        done.show (parent);
+    });
 }
 
 void activate (Gtk.Application app) {
+    // GtkApplication is single-instance: a second launch re-activates this one.
+    // Everything below (not least binding the socket, which unlinks whatever is
+    // there) must happen once, or the second launch takes the socket away from
+    // the running instance and then exits with it.
+    if (main_window != null) {
+        main_window.present ();
+        return;
+    }
+
+    // Bound here rather than in main () for the same reason: main () runs in the
+    // second launch too, before it discovers it is not the primary instance.
+    start_socket_service ();
+
     var window = new Gtk.ApplicationWindow (app);
-    window.set_title ("Claude Code Status");
-    window.set_default_size (720, 560);
+    main_window = window;
+    window.set_title (WINDOW_TITLE);
+    window.set_default_size (520, 220);
 
-    term_label = new Gtk.Label ("");
-    term_label.set_xalign (0);
-    term_label.set_yalign (0);
-    term_label.set_vexpand (true);
-    term_label.set_selectable (false);
+    table = new Gtk.Grid ();
+    table.set_row_spacing (6);
+    table.set_column_spacing (14);
+    table.set_margin_top (12);
+    table.set_margin_bottom (12);
+    table.set_margin_start (12);
+    table.set_margin_end (12);
+    table.set_valign (Gtk.Align.START);
 
-    // A monospace font is what makes the emulated columns line up. A Pango
-    // attribute does it for this one label, without a global CSS provider (and
-    // without Gtk.StyleContext, deprecated since 4.10).
-    var attrs = new Pango.AttrList ();
-    attrs.insert (Pango.attr_family_new ("monospace"));
-    term_label.set_attributes (attrs);
-
-    var keys = new Gtk.EventControllerKey ();
-    keys.key_pressed.connect (on_key_pressed);
-    // Cast needed: Gtk.Window has its own add_controller taking a
-    // ShortcutController, which would otherwise shadow Gtk.Widget's.
-    ((Gtk.Widget) window).add_controller (keys);
-
-    label = new Gtk.Label ("(no sessions yet)");
-    label.set_wrap (true);
-    label.set_wrap_mode (Pango.WrapMode.WORD_CHAR); // hook text can be one long token
-    label.set_xalign (0);
-    label.set_margin_top (12);
-    label.set_margin_bottom (12);
-    label.set_margin_start (12);
-    label.set_margin_end (12);
-
-    var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
-    box.set_margin_top (12);
-    box.set_margin_bottom (12);
-    box.set_margin_start (12);
-    box.set_margin_end (12);
-    box.append (term_label);
-    box.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
-    box.append (label);
-
-    window.set_child (box);
+    // Scrolled: the number of sessions is not bounded by the window height.
+    var scroller = new Gtk.ScrolledWindow ();
+    scroller.set_policy (Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC);
+    scroller.set_child (table);
+    window.set_child (scroller);
     window.present ();
 
-    // Fork here, not in main: read_async needs the main loop to be running.
-    // The child execs immediately, so inheriting GTK's fds is harmless.
-    spawn_shell ();
+    refresh_table (); // fills in the placeholder until a session reports
+    offer_hooks (window);
 }
 
 int main (string[] args) {
     sessions = new HashTable<string, string> (str_hash, str_equal);
+    wheres = new HashTable<string, string> (str_hash, str_equal);
     if (Ghostty.OscParser.create (null, out osc_parser) != Ghostty.Result.SUCCESS) {
         error ("failed to create libghostty-vt OSC parser");
     }
-    if (Ghostty.Terminal.create (null, out term, TERM_COLS, TERM_ROWS) != Ghostty.Result.SUCCESS) {
-        error ("failed to create libghostty-vt terminal");
-    }
-    start_socket_service ();
-
     var app = new Gtk.Application ("dev.hairness.cc-status", ApplicationFlags.DEFAULT_FLAGS);
     app.activate.connect (() => activate (app));
     return app.run (args);
