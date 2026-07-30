@@ -25,8 +25,20 @@ sessions of either agent, over either of two transports.
 ### Traffic lights
 
 Sessions are independent, so each gets **its own light** on its own row in a
-`Gtk.Grid`, sorted by key so rows keep their place. The row shows a shortened id
+`Gtk.ListBox`, sorted by key so rows keep their place. The row shows a shortened id
 (the full one is the tooltip), and the light's tooltip says what its colour means.
+
+**Click a row to focus that session's terminal window.** Only rows that can
+actually be landed on are clickable: they hover, take Enter, and carry a ↗. The
+rest are inert, and their tooltip says why. The lookup is `wmctrl -lp`, matching a
+window whose title contains the session key — which is there because the hook put
+it there over OSC 2 — and `wmctrl -ia` to raise it. No `wmctrl` on `PATH` means no
+row is clickable.
+
+That title only names the *active* tab, so a session in a background tab is not
+focusable, and raising a window whose active tab has since changed lands on the
+window, not the tab. X exposes windows, not tabs; selecting a tab would mean
+synthesising keystrokes and watching the title change, which is not worth it.
 
 ### Which terminal tab is that?
 
@@ -233,9 +245,11 @@ echo '{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash"}' | h
   source. Long text is ellipsized rather than allowed to stretch the window.
 - The table is rebuilt from scratch on every update — a handful of rows, so
   diffing which one changed would be more code than redrawing all of them. It is a
-  `Gtk.Grid` of labels rather than a `Gtk.ColumnView`: sortable, selectable rows
-  and a list model are not wanted here, and would cost an item GObject plus a
-  factory per column.
+  `Gtk.ListBox` of label rows, for whole-row activation, rather than a `Gtk.Grid`
+  (no notion of an activatable row) or a `Gtk.ColumnView` (sortable columns and a
+  list model, neither wanted, at the cost of an item GObject and a factory per
+  column). Columns line up via shared `width_chars`, and the header sits outside
+  the list so the keyboard does not have to skip over it.
 - `vapi/libghostty-vt.vapi` is named to match the `.pc` file so meson's
   automatic `--pkg libghostty-vt` picks it up. It passes a NULL allocator to
   `ghostty_osc_new`, which avoids binding the allocator vtable at all.

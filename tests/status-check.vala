@@ -71,6 +71,18 @@ int main () {
     assert (light_text (Light.GREEN) == "done — your turn");
     assert (light_text (Light.NONE) == "");
 
+    // Rows are focusable only when a window title names the session, which is
+    // when that session's tab is the active one.
+    string listing = """0x04800004 -1 256633 host Sidewing
+0x07800004  0 490149 host claude/9f3c1d2e-aaaa-bbbb: running Bash
+0x07a00004 -1 491422 host den""";
+    assert (window_id_for (listing, "claude/9f3c1d2e-aaaa-bbbb") == "0x07800004");
+    assert (window_id_for (listing, "claude/nope") == null);
+    // The id must come from the title, never from the host or pid columns.
+    assert (window_id_for (listing, "490149") == null);
+    assert (window_id_for ("", "claude/x") == null);
+    assert (window_id_for ("short line", "claude/x") == null);
+
     print ("ok: status logic passes\n");
     return 0;
 }

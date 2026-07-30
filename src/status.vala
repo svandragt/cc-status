@@ -126,3 +126,33 @@ public string light_text (Light light) {
         default:          return "";
     }
 }
+
+// Match a session to an X window by title. The hook names each tab
+// "<agent>/<id>: <status>" over OSC 2, so a window whose title contains the
+// session key is showing that session in its *active* tab - the only case where
+// raising the window lands on the right tab. X exposes windows, not tabs, so a
+// session sitting in a background tab is simply not focusable, and the row says so
+// rather than pretending.
+//
+// Input is one line per window from `wmctrl -lp`:
+//   0x07800004  0 490149 host  the window title
+public string? window_id_for (string wmctrl_output, string session_key) {
+    foreach (unowned string line in wmctrl_output.split ("\n")) {
+        // id, desktop, pid, host, then the title - which itself contains spaces.
+        string[] parts = Regex.split_simple ("\\s+", line.strip ());
+        if (parts.length < 5) {
+            continue;
+        }
+        var title = new StringBuilder ();
+        for (int i = 4; i < parts.length; i++) {
+            if (i > 4) {
+                title.append_c (' ');
+            }
+            title.append (parts[i]);
+        }
+        if (title.str.contains (session_key)) {
+            return parts[0];
+        }
+    }
+    return null;
+}

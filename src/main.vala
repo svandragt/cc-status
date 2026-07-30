@@ -16,17 +16,45 @@ const uint8 ST  = 0x5C; // the '\' of the ESC \ string terminator
 
 HashTable<string, string> sessions;
 HashTable<string, string> wheres;   // session id -> "pts/7 · project", if it said
-Gtk.Grid table;
+Gtk.ListBox table;
+Gtk.Widget header_row;
+GenericArray<string> row_ids;       // row index -> session id, for row-activated
+HashTable<string, string> targets;  // session id -> X window id, when focusable
 Gtk.Window main_window;
 Ghostty.OscParser osc_parser;
 
 const string WINDOW_TITLE = "AI Status";
 
+// A ListBox rather than a Gtk.Grid so the *whole row* is the click target, with
+// hover feedback and keyboard activation for free. Grid has no notion of a row you
+// can activate. The cost is that columns no longer line themselves up, hence these
+// widths, shared by the header and every row.
+const int SESSION_CHARS = 17;
+const int STATUS_CHARS = 22;
+
+// wmctrl does both halves of row-focusing: `-lp` lists windows with their titles,
+// `-ia` raises one. It lives in /usr/bin on this desktop, unlike xdotool, which
+// matters for an app launched from a desktop file rather than a shell.
+string? wmctrl = null;
+
+string? run_capture (string[] argv) {
+    try {
+        string output;
+        string errors;
+        int status;
+        Process.spawn_sync (null, argv, null, 0, null, out output, out errors, out status);
+        return status == 0 ? output : null;
+    } catch (SpawnError e) {
+        warning ("could not run %s: %s", argv[0], e.message);
+        return null;
+    }
+}
+
 // Rebuild the table from scratch on every update: there are a handful of rows,
 // so tracking which one changed would be more code than redrawing all of them.
 //
-// ponytail: a Gtk.Grid of labels rather than a Gtk.ColumnView. A ColumnView would
-// bring sortable, selectable rows and a list model, none of which is wanted here,
+// ponytail: a ListBox of label rows rather than a Gtk.ColumnView. A ColumnView
+// would bring sortable columns and a list model, neither of which is wanted here,
 // at the cost of an item GObject plus a factory per column.
 void refresh_table () {
     Gtk.Widget? child = table.get_first_child ();
@@ -36,52 +64,70 @@ void refresh_table () {
     }
 
     var ids = sorted_ids (sessions);
+    row_ids = new GenericArray<string> ();
+    targets.remove_all ();
+    header_row.set_visible (ids.length () > 0);
 
-    if (ids.length () == 0) {
-        // Statuses are live, not persisted: a fresh window is empty until the
-        // next hook event, which is worth saying so it does not read as broken.
-        var empty = new Gtk.Label ("Waiting for a hook event — a row appears when an agent next does something.");
-        empty.set_wrap (true);
-        empty.set_xalign (0);
-        table.attach (empty, 0, 0, 4, 1);
-    } else {
-        table.attach (header ("Session"), 1, 0, 1, 1);
-        table.attach (header ("Status"), 2, 0, 1, 1);
-        table.attach (header ("Where"), 3, 0, 1, 1);
+    // One listing per refresh, shared by every row: a spawn per row would mean
+    // several per hook event.
+    string? windows = wmctrl != null && ids.length () > 0
+        ? run_capture ({ wmctrl, "-lp", null })
+        : null;
 
-        int row = 1;
-        foreach (unowned string id in ids) {
-            unowned string text = sessions.lookup (id);
-            Light light = light_for (text);
+    foreach (unowned string id in ids) {
+        unowned string text = sessions.lookup (id);
+        Light light = light_for (text);
 
-            var dot = new Gtk.Label (light_glyph (light));
-            // The colour alone says nothing to a screen reader, and little to
-            // anyone who has not read the README.
-            dot.set_tooltip_text (light_text (light));
+        var dot = new Gtk.Label (light_glyph (light));
+        // The colour alone says nothing to a screen reader, and little to anyone
+        // who has not read the README.
+        dot.set_tooltip_text (light_text (light));
 
-            var session = new Gtk.Label (short_id (id));
-            session.set_xalign (0);
-            session.set_tooltip_text (id); // the full id, which the row truncates
+        var session = new Gtk.Label (short_id (id));
+        session.set_xalign (0);
+        session.set_width_chars (SESSION_CHARS);
+        session.set_tooltip_text (id); // the full id, which the row truncates
 
-            // Status text comes from a hook script: set_text (never markup), and
-            // ellipsized rather than allowed to stretch the window.
-            var status = new Gtk.Label (text);
-            status.set_xalign (0);
-            status.set_ellipsize (Pango.EllipsizeMode.END);
+        // Status text comes from a hook script: set_text (never markup), and
+        // ellipsized rather than allowed to stretch the window.
+        var status = new Gtk.Label (text);
+        status.set_xalign (0);
+        status.set_width_chars (STATUS_CHARS);
+        status.set_ellipsize (Pango.EllipsizeMode.END);
 
-            // Which terminal tab this session is in: `tty` in a tab matches the
-            // tty here. Blank for a session whose hook predates the field.
-            var place = new Gtk.Label (wheres.lookup (id) ?? "");
-            place.set_xalign (0);
-            place.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
-            place.set_hexpand (true);
+        // Which terminal tab this session is in: `tty` in a tab matches the tty
+        // here. Blank for a session whose hook predates the field.
+        var place = new Gtk.Label (wheres.lookup (id) ?? "");
+        place.set_xalign (0);
+        place.set_ellipsize (Pango.EllipsizeMode.MIDDLE);
+        place.set_hexpand (true);
 
-            table.attach (dot, 0, row, 1, 1);
-            table.attach (session, 1, row, 1, 1);
-            table.attach (status, 2, row, 1, 1);
-            table.attach (place, 3, row, 1, 1);
-            row++;
+        var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
+        box.append (dot);
+        box.append (session);
+        box.append (status);
+        box.append (place);
+
+        var row = new Gtk.ListBoxRow ();
+        string? window_id = windows == null ? null : window_id_for (windows, id);
+        if (window_id != null) {
+            targets.replace (id, window_id);
+            // Only a row that can actually be landed on is activatable - so it
+            // hovers, takes Enter, and earns the arrow. A row without a reachable
+            // window stays inert and says nothing it cannot do.
+            var arrow = new Gtk.Label ("↗");
+            arrow.set_tooltip_text ("Click to focus this session's terminal window");
+            box.append (arrow);
+            row.set_activatable (true);
+        } else {
+            row.set_activatable (false);
+            session.set_tooltip_text (id + "\n\nNot focusable: no window is showing " +
+                                      "this session, so its tab is not the active one.");
         }
+
+        row.set_child (box);
+        table.append (row);
+        row_ids.add (id);
     }
 
     // One light for the lot on the title, so the taskbar/window list answers "is
@@ -93,9 +139,25 @@ void refresh_table () {
         : light_glyph (summary) + " " + WINDOW_TITLE);
 }
 
-Gtk.Label header (string text) {
+void on_row_activated (Gtk.ListBoxRow row) {
+    int index = row.get_index ();
+    if (index < 0 || index >= row_ids.length) {
+        return;
+    }
+    string? window_id = targets.lookup (row_ids.get (index));
+    if (window_id != null) {
+        run_capture ({ wmctrl, "-ia", window_id, null });
+    }
+}
+
+Gtk.Label header (string text, int width_chars) {
     var label = new Gtk.Label (text);
     label.set_xalign (0);
+    if (width_chars > 0) {
+        label.set_width_chars (width_chars);
+    } else {
+        label.set_hexpand (true);
+    }
     var attrs = new Pango.AttrList ();
     attrs.insert (Pango.attr_weight_new (Pango.Weight.BOLD));
     label.set_attributes (attrs);
@@ -391,20 +453,39 @@ void activate (Gtk.Application app) {
     window.set_title (WINDOW_TITLE);
     window.set_default_size (520, 220);
 
-    table = new Gtk.Grid ();
-    table.set_row_spacing (6);
-    table.set_column_spacing (14);
-    table.set_margin_top (12);
-    table.set_margin_bottom (12);
-    table.set_margin_start (12);
-    table.set_margin_end (12);
-    table.set_valign (Gtk.Align.START);
+    table = new Gtk.ListBox ();
+    table.set_selection_mode (Gtk.SelectionMode.NONE);
+    table.row_activated.connect (on_row_activated);
+
+    // Statuses are live, not persisted: a fresh window is empty until the next
+    // hook event, which is worth saying so it does not read as broken.
+    var empty = new Gtk.Label ("Waiting for a hook event — a row appears when an agent next does something.");
+    empty.set_wrap (true);
+    empty.set_margin_top (12);
+    table.set_placeholder (empty);
+
+    // The header sits outside the list: inside, it would be one more row to skip
+    // over with the keyboard. Same widths as the rows, or nothing lines up.
+    var head = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
+    head.append (header ("", 1));
+    head.append (header ("Session", SESSION_CHARS));
+    head.append (header ("Status", STATUS_CHARS));
+    head.append (header ("Where", 0));
+    head.set_margin_start (12);
+    head.set_margin_end (12);
+    head.set_margin_top (12);
+    header_row = head;
 
     // Scrolled: the number of sessions is not bounded by the window height.
     var scroller = new Gtk.ScrolledWindow ();
     scroller.set_policy (Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC);
     scroller.set_child (table);
-    window.set_child (scroller);
+    scroller.set_vexpand (true);
+
+    var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
+    box.append (head);
+    box.append (scroller);
+    window.set_child (box);
     window.present ();
 
     refresh_table (); // fills in the placeholder until a session reports
@@ -412,8 +493,13 @@ void activate (Gtk.Application app) {
 }
 
 int main (string[] args) {
+    // Looked up once: absent means rows are never clickable, which is fine.
+    wmctrl = Environment.find_program_in_path ("wmctrl");
+
     sessions = new HashTable<string, string> (str_hash, str_equal);
     wheres = new HashTable<string, string> (str_hash, str_equal);
+    targets = new HashTable<string, string> (str_hash, str_equal);
+    row_ids = new GenericArray<string> ();
     if (Ghostty.OscParser.create (null, out osc_parser) != Ghostty.Result.SUCCESS) {
         error ("failed to create libghostty-vt OSC parser");
     }
