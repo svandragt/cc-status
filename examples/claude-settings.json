@@ -4,7 +4,10 @@
       {
         "matcher": ".*",
         "hooks": [
-          { "type": "command", "command": "hooks/cc-status.sh" }
+          {
+            "type": "command",
+            "command": "hooks/cc-status.sh"
+          }
         ]
       }
     ],
@@ -12,21 +15,40 @@
       {
         "matcher": ".*",
         "hooks": [
-          { "type": "command", "command": "hooks/cc-status.sh" }
+          {
+            "type": "command",
+            "command": "hooks/cc-status.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/cc-status.sh"
+          }
         ]
       }
     ],
     "Notification": [
       {
         "hooks": [
-          { "type": "command", "command": "hooks/cc-status.sh" }
+          {
+            "type": "command",
+            "command": "hooks/cc-status.sh"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "hooks/cc-status.sh" }
+          {
+            "type": "command",
+            "command": "hooks/cc-status.sh"
+          }
         ]
       }
     ]

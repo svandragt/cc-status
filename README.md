@@ -55,13 +55,21 @@ wanted:
 | Light | Meaning | Status text |
 |---|---|---|
 | 🔴 | something went wrong | `error in <tool>` |
-| 🟡 | still working, or blocked on you | `running <tool>`, `working (after <tool>)`, `waiting for permission`, `waiting for approval`, `notice` |
-| 🟢 | done — your turn | `idle` |
+| 🟡 | still working, or blocked on you | `thinking`, `running <tool>`, `working (after <tool>)`, `waiting for permission`, `waiting for approval` |
+| 🟢 | done — your turn | `idle`, `idle (notified)` |
 
-Green means **your input is possible**, so only a finished turn (Claude Code's
-`Stop`, Codex's `agent-turn-complete`) earns it. `PostToolUse` fires between tool
-calls with the agent still working, which is why that reads `working (after …)`
-and stays amber.
+Green means **your input is possible**, and only that. Three events conspire to
+keep it honest:
+
+- `Stop` (and Codex's `agent-turn-complete`) → `idle`: the turn is over, type away;
+- a `Notification` that is not a permission prompt — the idle-timeout nudge —
+  → `idle (notified)`: it is waiting on you, so green, not a warning;
+- `UserPromptSubmit` → `thinking`: between your prompt and the first tool call
+  nothing else fires, so without it the row would sit on green while the agent
+  works.
+
+`PostToolUse` fires between tool calls with the agent still going, which is why it
+reads `working (after …)` and stays amber.
 
 The **window title** carries the worst light of all sessions, so the
 taskbar/window list answers "does anything need me?" without focusing the app.
@@ -75,7 +83,7 @@ this is then just a terminal.
 | mechanism | hooks in `~/.claude/settings.json` | `notify` in `~/.codex/config.toml` |
 | entry point | `hooks/cc-status.sh` (JSON on stdin) | `hooks/codex-notify.sh` (JSON in `argv[1]`) |
 | derivation | `hooks/derive.jq` | `hooks/derive-codex.jq` |
-| states seen | per-tool start/end, failures, permission prompts, turn end | turn end (and approval requests, version depending) |
+| states seen | prompt submitted, per-tool start/end, failures, permission prompts, notifications, turn end | turn end (and approval requests, version depending) |
 
 Codex's `notify` only fires at those few points, so a Codex row never shows
 tool-by-tool progress — that would need a Codex plugin with real hooks, a much
@@ -147,7 +155,10 @@ scripts/install-hooks.sh "$PWD/hooks/cc-status.sh"              # ~/.claude/sett
 scripts/install-codex-notify.sh "$PWD/hooks/codex-notify.sh"    # ~/.codex/config.toml
 ```
 
-Both are idempotent (the hook path in the config is the marker), keep a `.bak`,
+`install-hooks.sh` is idempotent per event — an event already running the hook is
+left alone, one that is not gets it added, so a config from an older version picks
+up a newly needed event on a re-run. `install-codex-notify.sh` is idempotent on the
+hook path. Both keep a `.bak`,
 and leave the rest of the file alone. The Codex one refuses rather than replace a
 `notify` that is already set to something else. `socat` and `jq` must be
 installed, and both agents read their config at session start, so restart any

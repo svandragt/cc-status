@@ -54,9 +54,15 @@ check "Notification permission_prompt" \
   '{"session_id":"s1","hook_event_name":"Notification","notification_type":"permission_prompt"}' \
   'claude/s1\twaiting for permission'
 
+# The idle-timeout nudge means it is waiting on you, so it must read as idle.
 check "Notification other" \
   '{"session_id":"s1","hook_event_name":"Notification","notification_type":"idle_timeout"}' \
-  'claude/s1\tnotice'
+  'claude/s1\tidle (notified)'
+
+# Between prompt and first tool call there is no other event, so green would stick.
+check "UserPromptSubmit" \
+  '{"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"hi"}' \
+  'claude/s1\tthinking'
 
 check "Stop" \
   '{"session_id":"s1","hook_event_name":"Stop"}' \
@@ -109,4 +115,4 @@ case "$where" in
   *) echo "FAIL: where field is '$where'" >&2; exit 1 ;;
 esac
 
-echo "ok: all 15 mappings and the where field pass"
+echo "ok: all 16 mappings and the where field pass"

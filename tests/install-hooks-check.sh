@@ -40,8 +40,19 @@ check ".hooks.PreToolUse[0].matcher" '.*'
 check ".hooks.PreToolUse[0].hooks[0].command" "$HOOK"
 check '.hooks.Notification[0] | has("matcher")' false
 
+check ".hooks.UserPromptSubmit[0].hooks[0].command" "$HOOK"
+
 # Second run must be a no-op, not a second copy of every hook.
 "$root/scripts/install-hooks.sh" "$HOOK" >/dev/null
+check '.hooks.PreToolUse | length' 1
+check '.hooks.Stop | length' 2
+
+# A config installed by an older version, missing a newly needed event, must gain
+# just that event on a re-run - the others are already there and stay single.
+jq 'del(.hooks.UserPromptSubmit)' "$CLAUDE_SETTINGS" > "$tmp/old.json"
+cp "$tmp/old.json" "$CLAUDE_SETTINGS"
+"$root/scripts/install-hooks.sh" "$HOOK" >/dev/null
+check '.hooks.UserPromptSubmit | length' 1
 check '.hooks.PreToolUse | length' 1
 check '.hooks.Stop | length' 2
 
