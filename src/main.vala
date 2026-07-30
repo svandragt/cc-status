@@ -27,10 +27,20 @@ const string WINDOW_TITLE = "AI Status";
 
 // A ListBox rather than a Gtk.Grid so the *whole row* is the click target, with
 // hover feedback and keyboard activation for free. Grid has no notion of a row you
-// can activate. The cost is that columns no longer line themselves up, hence these
-// widths, shared by the header and every row.
+// can activate. The cost is that columns no longer line themselves up, hence a
+// SizeGroup per column, joining the header cell to that cell in every row.
+//
+// These are caps, not fixed widths: max_width_chars lets a column shrink to its
+// content and grow with it, where width_chars would pin an ellipsizing label to
+// exactly that many characters however much room the window had.
 const int SESSION_CHARS = 17;
-const int STATUS_CHARS = 22;
+const int STATUS_CHARS = 60;
+
+// Breathing room at the window edges, on the header and every row alike - they
+// have to share it or the columns stop lining up.
+const int EDGE_MARGIN = 4;
+
+Gtk.Label[] head_cells;   // Session, Status - the header end of the size groups
 
 // wmctrl does both halves of row-focusing: `-lp` lists windows with their titles,
 // `-ia` raises one. It lives in /usr/bin on this desktop, unlike xdotool, which
@@ -74,6 +84,14 @@ void refresh_table () {
         ? run_capture ({ wmctrl, "-lp", null })
         : null;
 
+    // Fresh groups each refresh: the rows they held have just been removed.
+    var dot_group = new Gtk.SizeGroup (Gtk.SizeGroupMode.HORIZONTAL);
+    var session_group = new Gtk.SizeGroup (Gtk.SizeGroupMode.HORIZONTAL);
+    var status_group = new Gtk.SizeGroup (Gtk.SizeGroupMode.HORIZONTAL);
+    dot_group.add_widget (head_cells[0]);
+    session_group.add_widget (head_cells[1]);
+    status_group.add_widget (head_cells[2]);
+
     foreach (unowned string id in ids) {
         unowned string text = sessions.lookup (id);
         Light light = light_for (text);
@@ -82,18 +100,22 @@ void refresh_table () {
         // The colour alone says nothing to a screen reader, and little to anyone
         // who has not read the README.
         dot.set_tooltip_text (light_text (light));
+        dot_group.add_widget (dot);
 
         var session = new Gtk.Label (short_id (id));
         session.set_xalign (0);
-        session.set_width_chars (SESSION_CHARS);
+        session.set_max_width_chars (SESSION_CHARS);
+        session.set_ellipsize (Pango.EllipsizeMode.END);
+        session_group.add_widget (session);
         session.set_tooltip_text (id); // the full id, which the row truncates
 
         // Status text comes from a hook script: set_text (never markup), and
         // ellipsized rather than allowed to stretch the window.
         var status = new Gtk.Label (text);
         status.set_xalign (0);
-        status.set_width_chars (STATUS_CHARS);
+        status.set_max_width_chars (STATUS_CHARS);
         status.set_ellipsize (Pango.EllipsizeMode.END);
+        status_group.add_widget (status);
 
         // Which terminal tab this session is in: `tty` in a tab matches the tty
         // here. Blank for a session whose hook predates the field.
@@ -103,6 +125,8 @@ void refresh_table () {
         place.set_hexpand (true);
 
         var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
+        box.set_margin_start (EDGE_MARGIN);
+        box.set_margin_end (EDGE_MARGIN);
         box.append (dot);
         box.append (session);
         box.append (status);
@@ -150,14 +174,10 @@ void on_row_activated (Gtk.ListBoxRow row) {
     }
 }
 
-Gtk.Label header (string text, int width_chars) {
+Gtk.Label header (string text, bool expand) {
     var label = new Gtk.Label (text);
     label.set_xalign (0);
-    if (width_chars > 0) {
-        label.set_width_chars (width_chars);
-    } else {
-        label.set_hexpand (true);
-    }
+    label.set_hexpand (expand);
     var attrs = new Pango.AttrList ();
     attrs.insert (Pango.attr_weight_new (Pango.Weight.BOLD));
     label.set_attributes (attrs);
@@ -467,12 +487,13 @@ void activate (Gtk.Application app) {
     // The header sits outside the list: inside, it would be one more row to skip
     // over with the keyboard. Same widths as the rows, or nothing lines up.
     var head = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
-    head.append (header ("", 1));
-    head.append (header ("Session", SESSION_CHARS));
-    head.append (header ("Status", STATUS_CHARS));
-    head.append (header ("Where", 0));
-    head.set_margin_start (12);
-    head.set_margin_end (12);
+    head_cells = { header ("", false), header ("Session", false), header ("Status", false) };
+    foreach (Gtk.Label cell in head_cells) {
+        head.append (cell);
+    }
+    head.append (header ("Where", true));
+    head.set_margin_start (EDGE_MARGIN);
+    head.set_margin_end (EDGE_MARGIN);
     head.set_margin_top (12);
     header_row = head;
 
