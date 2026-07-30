@@ -10,12 +10,13 @@
 cc_status_tty () {
   pid=$$
   depth=0
+  cc_status_agent_pid=
   while [ "$depth" -lt 8 ]; do
     set -- $(ps -o ppid=,tty= -p "$pid" 2>/dev/null)
     [ $# -lt 1 ] && return 1
     case "${2:-?}" in
       '?' | '') ;;
-      *) printf '%s' "$2"; return 0 ;;
+      *) cc_status_agent_pid=$pid; printf '%s' "$2"; return 0 ;;
     esac
     [ "$1" -le 1 ] 2>/dev/null && return 1
     pid=$1
@@ -33,6 +34,35 @@ cc_status_where () {
   else
     printf '%s' "$(basename "$PWD")"
   fi
+}
+
+# The pid the app watches as this session's life sign. Without one, a closed or
+# killed session keeps its last row forever, since no hook event ever comes to say
+# it is gone.
+#
+# Walk up for the agent itself rather than taking $PPID: hooks are run through a
+# shell that exits the moment the hook does, so $PPID would look dead instantly.
+# The tty holder is the fallback - it is the agent, or the shell that started it,
+# which at least dies with the tab.
+#
+# ponytail: matched on process name. A wrapper named something else falls back to
+# the tty holder, so quitting the agent but keeping the shell leaves the row until
+# the tab closes. Passing the real pid would need each agent to hand it to the hook.
+cc_status_pid () {
+  pid=$$
+  depth=0
+  while [ "$depth" -lt 8 ]; do
+    set -- $(ps -o ppid=,comm= -p "$pid" 2>/dev/null)
+    [ $# -lt 2 ] && break
+    case "$2" in
+      claude | codex | node) printf '%s' "$pid"; return 0 ;;
+    esac
+    [ "$1" -le 1 ] 2>/dev/null && break
+    pid=$1
+    depth=$((depth + 1))
+  done
+  cc_status_tty >/dev/null && printf '%s' "$cc_status_agent_pid"
+  return 0
 }
 
 # Name the tab after the session, via OSC 2 written straight to the terminal

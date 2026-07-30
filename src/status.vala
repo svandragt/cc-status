@@ -67,24 +67,42 @@ public string light_glyph (Light light) {
     }
 }
 
-// One status line: "<agent>/<id>\t<status text>" with an optional third field
-// saying where the session is (tty and project). Returns false on anything that
-// does not have at least the first two fields.
+// One status line: "<agent>/<id>\t<status text>" with two optional fields - a
+// third saying where the session is (tty and project) and a fourth carrying the
+// session's pid as a life sign. Returns false on anything that does not have at
+// least the first two fields.
 //
 // Trust boundary: these lines come from hook scripts, not from a trusted process,
-// so every field is length-clamped here and only ever rendered with set_text.
-public bool parse_status (string line, out string id, out string text, out string where) {
+// so every field is length-clamped here and only ever rendered with set_text. The
+// pid goes into a /proc path, so it is digits or nothing.
+public bool parse_status (string line, out string id, out string text, out string where,
+                         out string pid) {
     string[] parts = line.split ("\t");
     id = "";
     text = "";
     where = "";
+    pid = "";
     if (parts.length < 2) {
         return false;
     }
     id = clamp (parts[0]);
     text = clamp (parts[1]);
     where = parts.length > 2 ? clamp (parts[2]) : "";
+    if (parts.length > 3) {
+        string candidate = parts[3].strip ();
+        pid = uint64.try_parse (candidate) ? candidate : "";
+    }
     return id.length > 0 && text.length > 0;
+}
+
+// Is the process this session runs in still there? Statuses only ever arrive on
+// a hook event, so a session that is closed or killed leaves its last row sitting
+// there forever - the pid is the life sign that lets those rows be dropped.
+//
+// An empty pid means the hook did not say (an older hook, or no tty to walk up
+// from), and an unknown state is not grounds for removing the row.
+public bool session_alive (string pid) {
+    return pid.length == 0 || FileUtils.test ("/proc/" + pid, FileTest.EXISTS);
 }
 
 const int MAX_FIELD_LEN = 200;

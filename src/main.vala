@@ -16,6 +16,7 @@ const uint8 ST  = 0x5C; // the '\' of the ESC \ string terminator
 
 HashTable<string, string> sessions;
 HashTable<string, string> wheres;   // session id -> "pts/7 · project", if it said
+HashTable<string, string> pids;     // session id -> pid of its process, if it said
 Gtk.ListBox table;
 Gtk.Widget header_row;
 GenericArray<string> row_ids;       // row index -> session id, for row-activated
@@ -189,15 +190,41 @@ void set_status (string line) {
     string id;
     string text;
     string where;
-    if (!parse_status (line, out id, out text, out where)) {
+    string pid;
+    if (!parse_status (line, out id, out text, out where, out pid)) {
         return; // malformed, ignore
     }
     sessions.replace (id, text);
     if (where.length > 0) {
         wheres.replace (id, where);
     }
+    if (pid.length > 0) {
+        pids.replace (id, pid);
+    }
     refresh_table ();
 }
+
+// Drop rows whose session is gone. A closed or killed session sends no farewell
+// event, so its last status would otherwise sit in the table for good - green,
+// most likely, since the last thing it did was finish a turn. Returns true if
+// anything went, so the caller knows whether to redraw.
+bool drop_dead_sessions () {
+    bool changed = false;
+    foreach (unowned string id in sorted_ids (sessions)) {
+        if (session_alive (pids.lookup (id) ?? "")) {
+            continue;
+        }
+        sessions.remove (id);
+        wheres.remove (id);
+        pids.remove (id);
+        changed = true;
+    }
+    return changed;
+}
+
+// Sessions die between hook events, so the check cannot wait for the next one.
+// A stat per row every few seconds is cheap enough not to think about.
+const uint LIFE_CHECK_SECONDS = 5;
 
 // Pull status out of a real OSC sequence using libghostty-vt's parser, rather
 // than pattern-matching escape codes by hand. This is the transport a terminal
@@ -510,6 +537,12 @@ void activate (Gtk.Application app) {
     window.present ();
 
     refresh_table (); // fills in the placeholder until a session reports
+    Timeout.add_seconds (LIFE_CHECK_SECONDS, () => {
+        if (drop_dead_sessions ()) {
+            refresh_table ();
+        }
+        return Source.CONTINUE;
+    });
     offer_hooks (window);
 }
 
@@ -519,6 +552,7 @@ int main (string[] args) {
 
     sessions = new HashTable<string, string> (str_hash, str_equal);
     wheres = new HashTable<string, string> (str_hash, str_equal);
+    pids = new HashTable<string, string> (str_hash, str_equal);
     targets = new HashTable<string, string> (str_hash, str_equal);
     row_ids = new GenericArray<string> ();
     if (Ghostty.OscParser.create (null, out osc_parser) != Ghostty.Result.SUCCESS) {

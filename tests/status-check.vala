@@ -39,27 +39,40 @@ int main () {
     assert (ids.nth_data (1) == "codex/t9");
     assert (sorted_ids (new HashTable<string, string> (str_hash, str_equal)).length () == 0);
 
-    // Status lines: two fields required, a third ("where") optional.
+    // Status lines: two fields required, "where" and the pid optional.
     string id;
     string text;
     string where;
-    assert (parse_status ("claude/s1\tidle\tpts/7 · proj", out id, out text, out where));
-    assert (id == "claude/s1" && text == "idle" && where == "pts/7 · proj");
+    string pid;
+    assert (parse_status ("claude/s1\tidle\tpts/7 · proj\t4321", out id, out text, out where, out pid));
+    assert (id == "claude/s1" && text == "idle" && where == "pts/7 · proj" && pid == "4321");
 
-    assert (parse_status ("claude/s1\tidle", out id, out text, out where));
-    assert (where == "");
+    assert (parse_status ("claude/s1\tidle", out id, out text, out where, out pid));
+    assert (where == "" && pid == "");
 
     // Trailing whitespace is what the socket's line reader leaves behind.
-    assert (parse_status ("claude/s1\tworking (after Bash)\tpts/7\r\n", out id, out text, out where));
+    assert (parse_status ("claude/s1\tworking (after Bash)\tpts/7\r\n", out id, out text, out where, out pid));
     assert (text == "working (after Bash)" && where == "pts/7");
 
-    assert (!parse_status ("no tab here", out id, out text, out where));
-    assert (!parse_status ("claude/s1\t", out id, out text, out where));
-    assert (!parse_status ("\tidle", out id, out text, out where));
+    assert (!parse_status ("no tab here", out id, out text, out where, out pid));
+    assert (!parse_status ("claude/s1\t", out id, out text, out where, out pid));
+    assert (!parse_status ("\tidle", out id, out text, out where, out pid));
 
     // Fields are clamped: hook output is not a trusted source.
-    assert (parse_status ("claude/s1\t" + string.nfill (500, 'x'), out id, out text, out where));
+    assert (parse_status ("claude/s1\t" + string.nfill (500, 'x'), out id, out text, out where, out pid));
     assert (text.char_count () == 201 && text.has_suffix ("…"));
+
+    // The pid ends up in a /proc path, so anything but digits is no pid at all.
+    assert (parse_status ("claude/s1\tidle\tpts/7\t../../etc", out id, out text, out where, out pid));
+    assert (pid == "");
+    assert (parse_status ("claude/s1\tidle\tpts/7\t", out id, out text, out where, out pid));
+    assert (pid == "");
+
+    // Life signs: pid 1 is always there, pid 0 is not a process, and a session
+    // that gave no pid is never assumed dead.
+    assert (session_alive ("1"));
+    assert (!session_alive ("0"));
+    assert (session_alive (""));
 
     // Rows show a shortened id, with the agent name kept whole.
     assert (short_id ("claude/9f3c1d2e-aaaa") == "claude/9f3c1d2e");

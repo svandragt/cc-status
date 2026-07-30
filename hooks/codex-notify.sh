@@ -17,7 +17,7 @@ if [ -n "$line" ]; then
   # session label put on the terminal tab itself - see hooks/where.sh.
   . "$(dirname "$0")/where.sh"
   cc_status_set_tab_title "$(printf '%s' "$line" | cut -f1,2 --output-delimiter=': ')"
-  line=$(printf '%s\t%s' "$line" "$(cc_status_where)")
+  line=$(printf '%s\t%s\t%s' "$line" "$(cc_status_where)" "$(cc_status_pid)")
 
   if [ -n "$CC_STATUS_OSC" ]; then
     line=$(printf '\033]2;%s\007' "$line")
