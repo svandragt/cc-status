@@ -27,20 +27,35 @@ public Light light_for (string status) {
     return Light.AMBER;
 }
 
-// Worst state across all sessions wins, so one session blocked on a permission
-// prompt is never hidden by another that is happily running.
-public Light light_of (HashTable<string, string> sessions) {
-    Light worst = Light.NONE;
+// The one light that stands for all sessions - the window title, i.e. what the
+// taskbar shows. This is not severity: the question it answers is "is there
+// anything for me to do?", so a single session ready for input makes it green even
+// while others are working. Only with nothing green does a failure show, and amber
+// means every session is busy.
+public Light light_summary (HashTable<string, string> sessions) {
+    bool any_green = false;
+    bool any_red = false;
+    bool any = false;
+
     var iter = HashTableIter<string, string> (sessions);
     unowned string id;
     unowned string text;
     while (iter.next (out id, out text)) {
-        Light l = light_for (text);
-        if (l > worst) {
-            worst = l;
+        any = true;
+        switch (light_for (text)) {
+            case Light.GREEN: any_green = true; break;
+            case Light.RED:   any_red = true;   break;
+            default: break;
         }
     }
-    return worst;
+
+    if (any_green) {
+        return Light.GREEN;
+    }
+    if (any_red) {
+        return Light.RED;
+    }
+    return any ? Light.AMBER : Light.NONE;
 }
 
 public string light_glyph (Light light) {

@@ -84,12 +84,13 @@ void refresh_table () {
         }
     }
 
-    // The title carries the worst light of all sessions, so the taskbar/window
-    // list answers "does anything need me?" without focusing the window.
-    Light worst = light_of (sessions);
-    main_window.set_title (worst == Light.NONE
+    // One light for the lot on the title, so the taskbar/window list answers "is
+    // there anything for me to do?" without focusing the window - green as soon as
+    // any one session is ready for input. See light_summary ().
+    Light summary = light_summary (sessions);
+    main_window.set_title (summary == Light.NONE
         ? WINDOW_TITLE
-        : light_glyph (worst) + " " + WINDOW_TITLE);
+        : light_glyph (summary) + " " + WINDOW_TITLE);
 }
 
 Gtk.Label header (string text) {

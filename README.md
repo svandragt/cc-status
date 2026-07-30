@@ -71,10 +71,11 @@ keep it honest:
 `PostToolUse` fires between tool calls with the agent still going, which is why it
 reads `working (after …)` and stays amber.
 
-The **window title** carries the worst light of all sessions, so the
-taskbar/window list answers "does anything need me?" without focusing the app.
-Until a session reports there is no light anywhere and the title stays plain:
-this is then just a terminal.
+The **window title** carries one light for the lot, so the taskbar/window list
+answers "is there anything for me to do?" without focusing the app. That is not
+severity — green wins: one session ready for input turns the title green even while
+others work. Only with nothing green does a failure show (🔴), and 🟡 means every
+session is busy. Until a session reports, the title stays plain.
 
 ### The two agents
 

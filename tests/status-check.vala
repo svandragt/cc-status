@@ -16,14 +16,17 @@ int main () {
     assert (light_for ("error in Bash") == Light.RED);
     assert (light_for ("something new upstream") == Light.AMBER);
 
+    // The title's single light asks "anything for me to do?", so green wins.
     var sessions = new HashTable<string, string> (str_hash, str_equal);
-    assert (light_of (sessions) == Light.NONE);  // no session -> no light at all
-    sessions.replace ("a", "idle");
-    assert (light_of (sessions) == Light.GREEN);
-    sessions.replace ("b", "working (after Bash)");
-    assert (light_of (sessions) == Light.AMBER); // in-progress beats all-clear
-    sessions.replace ("c", "error in Bash");
-    assert (light_of (sessions) == Light.RED);   // the failure wins
+    assert (light_summary (sessions) == Light.NONE);  // no session -> no light
+    sessions.replace ("a", "working (after Bash)");
+    assert (light_summary (sessions) == Light.AMBER); // everything busy
+    sessions.replace ("b", "error in Bash");
+    assert (light_summary (sessions) == Light.RED);   // nothing ready, one broke
+    sessions.replace ("c", "idle");
+    assert (light_summary (sessions) == Light.GREEN); // one ready beats the rest
+    sessions.remove ("c");
+    assert (light_summary (sessions) == Light.RED);   // and back again
     assert (light_glyph (Light.NONE) == "");
 
     // One row per session, sorted by key so rows stay put across updates.
