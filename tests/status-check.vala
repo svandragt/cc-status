@@ -9,10 +9,12 @@ int main () {
     assert (light_for ("running Bash") == Light.AMBER);
     // Between tool calls the agent is still working, so this must not be green.
     assert (light_for ("working (after Bash)") == Light.AMBER);
-    assert (light_for ("waiting for permission") == Light.AMBER);
     assert (light_for ("thinking") == Light.AMBER);
-    // The idle-timeout nudge is the agent waiting on you: input is possible.
+    // The idle-timeout nudge, and a permission/approval prompt, both mean the
+    // agent is waiting on you: input is possible, so both are green.
     assert (light_for ("idle (notified)") == Light.GREEN);
+    assert (light_for ("idle (permission)") == Light.GREEN);
+    assert (light_for ("idle (approval)") == Light.GREEN);
     assert (light_for ("error in Bash") == Light.RED);
     assert (light_for ("something new upstream") == Light.AMBER);
 
@@ -31,7 +33,7 @@ int main () {
 
     // One row per session, sorted by key so rows stay put across updates.
     sessions.remove_all ();
-    sessions.replace ("codex/t9", "waiting for approval");
+    sessions.replace ("codex/t9", "idle (approval)");
     sessions.replace ("claude/9f3c1d2e-aaaa-bbbb", "idle");
     var ids = sorted_ids (sessions);
     assert (ids.length () == 2);

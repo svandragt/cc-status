@@ -52,7 +52,7 @@ check "PostToolUse non-object response" \
 
 check "Notification permission_prompt" \
   '{"session_id":"s1","hook_event_name":"Notification","notification_type":"permission_prompt"}' \
-  'claude/s1\twaiting for permission'
+  'claude/s1\tidle (permission)'
 
 # The idle-timeout nudge means it is waiting on you, so it must read as idle.
 check "Notification other" \
@@ -94,7 +94,7 @@ check_codex "codex prefers thread id" \
 
 check_codex "codex approval request" \
   '{"type":"approval-requested","turn-id":"t9"}' \
-  'codex/t9\twaiting for approval'
+  'codex/t9\tidle (approval)'
 
 check_codex "codex unknown event" \
   '{"type":"something-else","turn-id":"t9"}' \

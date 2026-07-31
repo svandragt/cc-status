@@ -72,16 +72,20 @@ wanted:
 | Light | Meaning | Status text |
 |---|---|---|
 | 🔴 | something went wrong | `error in <tool>` |
-| 🟡 | still working, or blocked on you | `thinking`, `running <tool>`, `working (after <tool>)`, `waiting for permission`, `waiting for approval` |
-| 🟢 | done — your turn | `idle`, `idle (notified)` |
+| 🟡 | still working | `thinking`, `running <tool>`, `working (after <tool>)` |
+| 🟢 | done — your turn | `idle`, `idle (notified)`, `idle (permission)`, `idle (approval)` |
 
-Green means **your input is possible**, and only that. Three events keep it
+Green means **your input is possible**, and only that. Four events keep it
 honest:
 
 - `Stop` (and Codex's `agent-turn-complete`) → `idle`: the turn is over, type
   away;
 - a `Notification` that is not a permission prompt — the idle-timeout nudge —
   → `idle (notified)`: it is waiting on you, so green, not a warning;
+- a permission prompt (Claude Code's `Notification` with `notification_type:
+  permission_prompt`, Codex's approval request) → `idle (permission)` /
+  `idle (approval)`: nothing happens until you decide, which is exactly as
+  green as nothing happens until you type;
 - `UserPromptSubmit` → `thinking`: between your prompt and the first tool call
   nothing else fires, so without it the row would sit on green while the agent
   works.

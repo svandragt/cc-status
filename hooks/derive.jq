@@ -26,7 +26,9 @@ elif .hook_event_name == "PostToolUse" then
   else "claude/\(.session_id)\t" + "working (after \(.tool_name))"
   end
 elif .hook_event_name == "Notification" and .notification_type == "permission_prompt" then
-  "claude/\(.session_id)\t" + "waiting for permission"
+  # A permission prompt is as green as Stop: nothing happens until you decide,
+  # same as nothing happens until you type - both are "your input is possible".
+  "claude/\(.session_id)\t" + "idle (permission)"
 elif .hook_event_name == "Notification" then
   # Any other notification (the idle-timeout nudge, most often) means the agent
   # is not working and is waiting on you - which is green, not a warning.

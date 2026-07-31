@@ -14,7 +14,9 @@ def id: (."thread-id" // ."session-id" // ."turn-id" // "session");
 if .type == "agent-turn-complete" then
   "codex/\(id)\t" + "idle"
 elif .type != null and (.type | test("approval|permission|elicit")) then
-  "codex/\(id)\t" + "waiting for approval"
+  # Green, not amber: nothing happens until you decide, same as Stop - both are
+  # "your input is possible".
+  "codex/\(id)\t" + "idle (approval)"
 elif .type != null then
   "codex/\(id)\t" + "notice (\(.type))"
 else
