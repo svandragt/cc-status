@@ -96,6 +96,25 @@ int main () {
     assert (window_id_for ("", "claude/x") == null);
     assert (window_id_for ("short line", "claude/x") == null);
 
+    // pid-based matching reaches a session in *any* tab, not just the one whose
+    // title is currently showing: 777 is a background tab in the same window as
+    // 490149's active one, both children of the terminal process.
+    string ppid_listing = """777 490149
+495000 777
+490149 555
+555 1""";
+    var ppids = parse_ppids (ppid_listing);
+    assert (window_id_for_pid (listing, "490149", ppids) == "0x07800004"); // the window's own pid
+    assert (window_id_for_pid (listing, "777", ppids) == "0x07800004");    // background tab
+    assert (window_id_for_pid (listing, "495000", ppids) == "0x07800004"); // nested (shell -> agent)
+    assert (window_id_for_pid (listing, "999999", ppids) == null);        // no such process
+    assert (window_id_for_pid (listing, "", ppids) == null);             // no pid reported
+    assert (window_id_for_pid ("", "490149", ppids) == null);
+
+    // A cycle (a malformed or adversarial ps listing) must not hang the walk.
+    var cyclic = parse_ppids ("1 2\n2 1");
+    assert (window_id_for_pid (listing, "1", cyclic) == null);
+
     print ("ok: status logic passes\n");
     return 0;
 }

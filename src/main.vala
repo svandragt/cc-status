@@ -43,10 +43,13 @@ const int EDGE_MARGIN = 4;
 
 Gtk.Label[] head_cells;   // Session, Status - the header end of the size groups
 
-// wmctrl does both halves of row-focusing: `-lp` lists windows with their titles,
-// `-ia` raises one. It lives in /usr/bin on this desktop, unlike xdotool, which
-// matters for an app launched from a desktop file rather than a shell.
+// wmctrl does two of the three jobs row-focusing needs: `-lp` lists windows with
+// their titles and owning pids, `-ia` raises one. It lives in /usr/bin on this
+// desktop, unlike xdotool, which matters for an app launched from a desktop file
+// rather than a shell. The third job, walking a session's process ancestry up to
+// whichever pid owns its window, is `ps -eo pid=,ppid=` - always present.
 string? wmctrl = null;
+string? ps = null;
 
 string? run_capture (string[] argv) {
     try {
@@ -83,6 +86,9 @@ void refresh_table () {
     // several per hook event.
     string? windows = wmctrl != null && ids.length () > 0
         ? run_capture ({ wmctrl, "-lp", null })
+        : null;
+    HashTable<string, string>? ppids = windows != null && ps != null
+        ? parse_ppids (run_capture ({ ps, "-eo", "pid=,ppid=", null }) ?? "")
         : null;
 
     // Fresh groups each refresh: the rows they held have just been removed.
@@ -134,7 +140,18 @@ void refresh_table () {
         box.append (place);
 
         var row = new Gtk.ListBoxRow ();
-        string? window_id = windows == null ? null : window_id_for (windows, id);
+        // Ancestry first: it reaches a session in any tab, not only the one whose
+        // title is currently showing. Title match is the fallback, for a hook that
+        // never reported a pid.
+        string? window_id = null;
+        if (windows != null) {
+            if (ppids != null) {
+                window_id = window_id_for_pid (windows, pids.lookup (id) ?? "", ppids);
+            }
+            if (window_id == null) {
+                window_id = window_id_for (windows, id);
+            }
+        }
         if (window_id != null) {
             targets.replace (id, window_id);
             // Only a row that can actually be landed on is activatable - so it
@@ -146,8 +163,8 @@ void refresh_table () {
             row.set_activatable (true);
         } else {
             row.set_activatable (false);
-            session.set_tooltip_text (id + "\n\nNot focusable: no window is showing " +
-                                      "this session, so its tab is not the active one.");
+            session.set_tooltip_text (id + "\n\nNot focusable: no open window is " +
+                                      "running this session.");
         }
 
         row.set_child (box);

@@ -147,10 +147,9 @@ public string light_text (Light light) {
 
 // Match a session to an X window by title. The hook names each tab
 // "<agent>/<id>: <status>" over OSC 2, so a window whose title contains the
-// session key is showing that session in its *active* tab - the only case where
-// raising the window lands on the right tab. X exposes windows, not tabs, so a
-// session sitting in a background tab is simply not focusable, and the row says so
-// rather than pretending.
+// session key is showing that session in its *active* tab. Used as a fallback
+// for window_id_for_pid, below: a session whose hook predates the pid field, or
+// whose process tree could not be walked, still gets a shot at matching.
 //
 // Input is one line per window from `wmctrl -lp`:
 //   0x07800004  0 490149 host  the window title
@@ -169,6 +168,64 @@ public string? window_id_for (string wmctrl_output, string session_key) {
             title.append (parts[i]);
         }
         if (title.str.contains (session_key)) {
+            return parts[0];
+        }
+    }
+    return null;
+}
+
+// Parse `ps -eo pid=,ppid=` into pid -> parent pid, so a process's ancestry can
+// be walked in memory rather than with a spawn per pid.
+public HashTable<string, string> parse_ppids (string ps_output) {
+    var map = new HashTable<string, string> (str_hash, str_equal);
+    foreach (unowned string line in ps_output.split ("\n")) {
+        string[] parts = Regex.split_simple ("\\s+", line.strip ());
+        if (parts.length < 2) {
+            continue;
+        }
+        map.replace (parts[0], parts[1]);
+    }
+    return map;
+}
+
+// Match a session to an X window by process ancestry rather than title: the
+// terminal emulator that owns the window is an ancestor of the session's own
+// process regardless of which tab it sits in, so this reaches every tab in a
+// window, not just the one whose title currently shows. `ppids` is built once
+// per refresh from `ps -eo pid=,ppid=`.
+//
+// This only distinguishes windows when each is its own process (true of most
+// terminal emulators). A terminal that runs every window through one shared
+// daemon process would have every window resolve to that same pid - nothing
+// left in `wmctrl -lp` tells windows of such a daemon apart.
+//
+// Input is the same `wmctrl -lp` listing as window_id_for.
+public string? window_id_for_pid (string wmctrl_output, string session_pid,
+                                   HashTable<string, string> ppids) {
+    if (session_pid.length == 0) {
+        return null;
+    }
+
+    var ancestors = new HashTable<string, bool> (str_hash, str_equal);
+    string current = session_pid;
+    int depth = 0;
+    while (current.length > 0 && !ancestors.contains (current) && depth < 64) {
+        ancestors.replace (current, true);
+        string? parent = ppids.lookup (current);
+        if (parent == null || parent == "0") {
+            break;
+        }
+        current = parent;
+        depth++;
+    }
+
+    foreach (unowned string line in wmctrl_output.split ("\n")) {
+        // id, desktop, pid, host, title - only the pid column matters here.
+        string[] parts = Regex.split_simple ("\\s+", line.strip ());
+        if (parts.length < 3) {
+            continue;
+        }
+        if (ancestors.contains (parts[2])) {
             return parts[0];
         }
     }
