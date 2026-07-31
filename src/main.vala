@@ -518,7 +518,12 @@ void activate (Gtk.Application app) {
     window.set_default_size (520, 220);
 
     table = new Gtk.ListBox ();
-    table.set_selection_mode (Gtk.SelectionMode.NONE);
+    // SINGLE, not NONE: a single click now selects the row rather than focusing
+    // the window. activate_on_single_click(false) moves row-activated - which
+    // drives the focus - to double-click/Enter instead of the single click GTK
+    // fires it on by default.
+    table.set_selection_mode (Gtk.SelectionMode.SINGLE);
+    table.set_activate_on_single_click (false);
     table.row_activated.connect (on_row_activated);
 
     // Statuses are live, not persisted: a fresh window is empty until the next
@@ -566,6 +571,7 @@ void activate (Gtk.Application app) {
 int main (string[] args) {
     // Looked up once: absent means rows are never clickable, which is fine.
     wmctrl = Environment.find_program_in_path ("wmctrl");
+    ps = Environment.find_program_in_path ("ps");
 
     sessions = new HashTable<string, string> (str_hash, str_equal);
     wheres = new HashTable<string, string> (str_hash, str_equal);
