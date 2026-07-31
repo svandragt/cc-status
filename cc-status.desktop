@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=cc-status
+Comment=Traffic lights for Claude Code and Codex sessions
+Exec=__EXEC__
+Terminal=false
+Categories=Development;Utility;

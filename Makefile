@@ -1,4 +1,4 @@
-.PHONY: all setup build test run clean
+.PHONY: all setup build test run clean install-desktop
 
 all: build
 
@@ -21,6 +21,11 @@ test: build
 
 run: build
 	./build/cc-status
+
+install-desktop: build
+	mkdir -p $(HOME)/.local/share/applications
+	sed "s|__EXEC__|$(abspath build/cc-status)|" cc-status.desktop > $(HOME)/.local/share/applications/cc-status.desktop
+	update-desktop-database $(HOME)/.local/share/applications 2>/dev/null || true
 
 clean:
 	rm -rf build
