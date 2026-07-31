@@ -117,6 +117,17 @@ int main () {
     var cyclic = parse_ppids ("1 2\n2 1");
     assert (window_id_for_pid (listing, "1", cyclic) == null);
 
+    // /clear keeps the same pid but starts a new session_id - the old id on
+    // that pid is stale the instant the new one shows up, not just once its
+    // (still-alive) process eventually exits.
+    var live_pids = new HashTable<string, string> (str_hash, str_equal);
+    live_pids.replace ("claude/old", "4321");
+    live_pids.replace ("claude/other", "9999");
+    var stale = stale_by_pid (live_pids, "claude/new", "4321");
+    assert (stale.length () == 1 && stale.nth_data (0) == "claude/old");
+    assert (stale_by_pid (live_pids, "claude/old", "4321").length () == 0); // same id, not stale
+    assert (stale_by_pid (live_pids, "claude/new", "").length () == 0);     // no pid reported
+
     print ("ok: status logic passes\n");
     return 0;
 }

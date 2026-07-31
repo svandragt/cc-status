@@ -105,6 +105,29 @@ public bool session_alive (string pid) {
     return pid.length == 0 || FileUtils.test ("/proc/" + pid, FileTest.EXISTS);
 }
 
+// One pid is one agent process, so it can only ever be running one session at a
+// time. /clear (and /resume onto a different session) keeps the same process
+// alive but starts a new session_id - the old id then gets no further hook
+// event, so session_alive never has a reason to drop it, and its last row would
+// sit next to the new one forever. Whichever other ids already claim the new
+// event's pid are therefore stale the moment it arrives, not just when the
+// process eventually exits.
+public List<string> stale_by_pid (HashTable<string, string> pids, string new_id, string new_pid) {
+    var stale = new List<string> ();
+    if (new_pid.length == 0) {
+        return stale;
+    }
+    var iter = HashTableIter<string, string> (pids);
+    unowned string id;
+    unowned string pid;
+    while (iter.next (out id, out pid)) {
+        if (id != new_id && pid == new_pid) {
+            stale.append (id);
+        }
+    }
+    return stale;
+}
+
 const int MAX_FIELD_LEN = 200;
 
 string clamp (string s) {

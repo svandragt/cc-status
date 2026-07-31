@@ -211,6 +211,15 @@ void set_status (string line) {
     if (!parse_status (line, out id, out text, out where, out pid)) {
         return; // malformed, ignore
     }
+    // A /clear or /resume keeps the same agent process but starts a fresh
+    // session_id - drop whichever other id was last seen on this pid, or its
+    // row would sit next to the new one until the process exits.
+    foreach (unowned string dead in stale_by_pid (pids, id, pid)) {
+        sessions.remove (dead);
+        wheres.remove (dead);
+        pids.remove (dead);
+    }
+
     sessions.replace (id, text);
     if (where.length > 0) {
         wheres.replace (id, where);
