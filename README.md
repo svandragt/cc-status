@@ -1,3 +1,5 @@
+> **Archived.** This project is replaced by [herdr-dash](https://github.com/svandragt/herdr-dash).
+
 # cc-status
 
 cc-status shows one traffic light per AI agent session — Claude Code and Codex —
